@@ -4,11 +4,14 @@
 
 -- Jonesing GTA-like Mission System
 --
--- Draws glowing mission-start markers at key map locations.  When the player
+-- Draws GTA-style glowing beacon columns at key map locations.  When the player
 -- drives into a marker a mission begins:
 --
 --   CHASE  – a target vehicle spawns and flees; player must catch and destroy it.
 --   ESCAPE – 10 police cars spawn around the player; player must outrun them all.
+--
+-- An ImGui HUD panel (top-left) shows every mission with a compass direction and
+-- distance so the player can navigate to them from anywhere on the map.
 
 local M = {}
 
@@ -26,55 +29,71 @@ local missionPoints = {
         type          = CHASE,
         pos           = vec3(  100,  200, 25),
         triggerRadius = 12,
-        color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.55 },
+        color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.70 },
     },
     {
         name          = "Police Gauntlet",
         type          = ESCAPE,
         pos           = vec3( -300,  100, 20),
         triggerRadius = 12,
-        color         = { r = 0.10, g = 0.40, b = 1.0, a = 0.55 },
+        color         = { r = 0.10, g = 0.40, b = 1.0, a = 0.70 },
     },
     {
         name          = "Highway Pursuit",
         type          = CHASE,
         pos           = vec3(  500, -200, 30),
         triggerRadius = 12,
-        color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.55 },
+        color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.70 },
     },
     {
         name          = "Police Ambush",
         type          = ESCAPE,
         pos           = vec3( -100,  500, 22),
         triggerRadius = 12,
-        color         = { r = 0.10, g = 0.40, b = 1.0, a = 0.55 },
+        color         = { r = 0.10, g = 0.40, b = 1.0, a = 0.70 },
     },
     {
         name          = "Industrial Pursuit",
         type          = CHASE,
         pos           = vec3(  300,  350, 28),
         triggerRadius = 12,
-        color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.55 },
+        color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.70 },
     },
 }
 
 -- ── Tuning constants ───────────────────────────────────────────────────────────
 local PULSE_SPEED         = 1.5    -- marker pulse rate (radians / second)
 local MISSION_TIME_LIMIT  = 120    -- seconds before failure
+local MISSION_COOLDOWN    = 10     -- seconds before the same marker can re-trigger
 local ESCAPE_MIN_DISTANCE = 250    -- metres: all police beyond this = escaped
 local CHASE_DAMAGE_THRESH = 0.75   -- getDamage() value that counts as "destroyed"
 local CHASE_SPAWN_OFFSET  = 80     -- metres ahead of player to spawn the target
 local POLICE_SPAWN_RADIUS = { min = 55, max = 80 }  -- ring around player
 local POLICE_COUNT        = 10
 
+-- Beacon visual constants
+-- The beacon is a tall vertical column so it is visible from ground level while
+-- driving AND does not clip into terrain on the overhead map.
+local BEACON_BELOW        = 30     -- metres below the defined marker Z (digs into terrain so the column looks grounded)
+local BEACON_ABOVE        = 70     -- metres above the defined marker Z
+local BEACON_STEPS        = 8      -- number of sphere slices in the vertical pillar
+local BEACON_PILLAR_R     = 3.0    -- radius of the pillar spheres (tapers toward cap)
+local BEACON_RING_SEGS    = 16     -- segments in the ground-level trigger ring
+
+-- HUD constants
+local HUD_WINDOW_WIDTH    = 255    -- width of the ImGui compass panel (pixels)
+local DIST_KM_THRESHOLD   = 1000   -- metres; distances above this are shown in km
+
 -- ── State ──────────────────────────────────────────────────────────────────────
 local pulseTime       = 0
 local mission         = nil   -- active mission table, or nil when idle
 local spawnedVehicles = {}    -- list of { id = <vehicleID>, role = "target"|"police" }
+local missionCooldowns = {}   -- mp.name -> seconds remaining on cooldown
 
--- Pre-compute squared trigger radii so onUpdate avoids per-frame multiplications
+-- Pre-compute per-marker values that are constant between frames
 for _, mp in ipairs(missionPoints) do
-    mp.triggerRadiusSq = mp.triggerRadius * mp.triggerRadius
+    mp.triggerRadiusSq          = mp.triggerRadius * mp.triggerRadius
+    missionCooldowns[mp.name]   = 0
 end
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────
@@ -90,6 +109,112 @@ end
 
 local function notify(msgType, title, msg)
     guihooks.trigger("toastrMsg", { type = msgType, title = title, msg = msg })
+end
+
+-- Returns an 8-point compass abbreviation for a world-space (dx, dy) vector.
+-- Axis convention: +X = East, +Y = North (standard BeamNG world coordinates).
+local function compassDir(dx, dy)
+    local angle = math.atan2(dy, dx) * (180 / math.pi)
+    if angle < 0 then angle = angle + 360 end
+    local dirs = { "E", "NE", "N", "NW", "W", "SW", "S", "SE" }
+    local idx   = (math.floor((angle + 22.5) / 45) % 8) + 1
+    return dirs[idx]
+end
+
+-- ── Beacon rendering ───────────────────────────────────────────────────────────
+-- Draws a GTA-style vertical beacon column.  The column extends BEACON_BELOW m
+-- below and BEACON_ABOVE m above the marker's defined Z coordinate, so it is
+-- always visible from ground-level cameras and does not fully hide in terrain
+-- on the overhead map.
+local function drawBeacon(mp, col)
+    local cx   = mp.pos.x
+    local cy   = mp.pos.y
+    local cz   = mp.pos.z
+    local botZ = cz - BEACON_BELOW
+    local topZ = cz + BEACON_ABOVE
+
+    -- Ground-level trigger ring (ring of small spheres at the trigger radius)
+    for s = 0, BEACON_RING_SEGS - 1 do
+        local a  = (s / BEACON_RING_SEGS) * 2 * math.pi
+        local rx = cx + math.cos(a) * mp.triggerRadius
+        local ry = cy + math.sin(a) * mp.triggerRadius
+        debugDrawer:drawSphere(vec3(rx, ry, cz), 1.2, col)
+    end
+
+    -- Vertical pillar of spheres from bottom to top (tapers slightly toward cap)
+    for s = 0, BEACON_STEPS do
+        local t = s / BEACON_STEPS
+        local z = botZ + t * (topZ - botZ)
+        local r = BEACON_PILLAR_R * (1.0 - t * 0.45)
+        debugDrawer:drawSphere(vec3(cx, cy, z), r, col)
+    end
+
+    -- Large cap sphere at the very top — clearly visible from far away
+    debugDrawer:drawSphere(vec3(cx, cy, topZ), mp.triggerRadius * 0.45, col)
+end
+
+-- ── ImGui HUD panel ────────────────────────────────────────────────────────────
+-- Draws a compact compass panel in the top-left corner showing every mission
+-- point with its type, name, compass direction and distance.  This acts as the
+-- minimap / navigation guide so the player can find missions while driving.
+local function drawHUD()
+    if not im then return end
+
+    local playerPos = getPlayerPos()
+    if not playerPos then return end
+
+    im.SetNextWindowSize(im.ImVec2(HUD_WINDOW_WIDTH, 0), im.Cond_Always)
+    im.SetNextWindowPos(im.ImVec2(10, 10), im.Cond_Always)
+    im.SetNextWindowBgAlpha(0.82)
+
+    local winFlags = bit.bor(
+        im.WindowFlags_NoTitleBar,
+        im.WindowFlags_NoResize,
+        im.WindowFlags_NoMove,
+        im.WindowFlags_NoSavedSettings,
+        im.WindowFlags_NoScrollbar
+    )
+
+    local drawn = im.Begin("##jonesingHUD", nil, winFlags)
+    if drawn then
+        im.TextColored(im.ImVec4(1.0, 0.85, 0.0, 1.0), "  MISSIONS")
+        im.Separator()
+
+        for _, mp in ipairs(missionPoints) do
+            local isActive   = mission and mission.point == mp
+            local onCooldown = (missionCooldowns[mp.name] or 0) > 0
+            local dist       = playerPos:distance(mp.pos)
+            local distStr    = dist < DIST_KM_THRESHOLD
+                               and (math.floor(dist) .. " m")
+                               or  string.format("%.1f km", dist / DIST_KM_THRESHOLD)
+
+            if isActive then
+                local rem = math.max(0, math.ceil(MISSION_TIME_LIMIT - mission.timer))
+                im.TextColored(im.ImVec4(1.0, 1.0, 0.0, 1.0),
+                    "  >> " .. mp.name .. "  [" .. rem .. "s]")
+
+            elseif onCooldown then
+                im.TextColored(im.ImVec4(0.45, 0.45, 0.45, 1.0),
+                    "  [--] " .. mp.name)
+                im.TextColored(im.ImVec4(0.40, 0.40, 0.40, 1.0),
+                    "       CD: " .. math.ceil(missionCooldowns[mp.name]) .. "s")
+
+            else
+                local typeTag = mp.type == CHASE and "C" or "E"
+                local dx      = mp.pos.x - playerPos.x
+                local dy      = mp.pos.y - playerPos.y
+                local dir     = compassDir(dx, dy)
+                local tc      = mp.type == CHASE
+                                and im.ImVec4(1.0, 0.55, 0.15, 1.0)
+                                or  im.ImVec4(0.25, 0.55, 1.0,  1.0)
+
+                im.TextColored(tc, "  [" .. typeTag .. "] " .. mp.name)
+                im.TextColored(im.ImVec4(0.75, 0.75, 0.75, 1.0),
+                    "       " .. dir .. "  " .. distStr)
+            end
+        end
+    end
+    im.End()
 end
 
 -- ── Mission start helpers ──────────────────────────────────────────────────────
@@ -190,6 +315,9 @@ end
 local function cleanupMission(success)
     if not mission then return end
 
+    -- Start a cooldown so the player does not re-trigger by staying in the zone
+    missionCooldowns[mission.point.name] = MISSION_COOLDOWN
+
     -- Despawn all mission-spawned vehicles
     for _, vd in ipairs(spawnedVehicles) do
         if be:getObjectByID(vd.id) then
@@ -243,47 +371,65 @@ end
 local function onUpdate(dt)
     pulseTime = pulseTime + dt * PULSE_SPEED
 
-    -- Draw all mission markers
-    for _, mp in ipairs(missionPoints) do
-        local isActive = mission and mission.point == mp
-        local pulse    = 0.5 + 0.5 * math.sin(pulseTime)
+    -- Tick post-mission cooldowns
+    for name, cd in pairs(missionCooldowns) do
+        if cd > 0 then
+            missionCooldowns[name] = math.max(0, cd - dt)
+        end
+    end
 
-        local radius, col
+    -- Draw all mission markers as tall GTA-style beacon columns
+    for _, mp in ipairs(missionPoints) do
+        local isActive   = mission and mission.point == mp
+        local onCooldown = (missionCooldowns[mp.name] or 0) > 0
+        local pulse      = 0.5 + 0.5 * math.sin(pulseTime)
+
+        local col
         if isActive then
-            -- Active marker: yellow, larger and more opaque, pulsing
-            radius = mp.triggerRadius * (1.0 + 0.25 * pulse)
-            col    = ColorF(1.0, 1.0, 0.0, 0.65 + 0.35 * pulse)
+            -- Active beacon: yellow, bright and fully pulsing
+            col = ColorF(1.0, 1.0, 0.0, 0.60 + 0.40 * pulse)
+        elseif onCooldown then
+            -- Cooling down: muted grey
+            col = ColorF(0.5, 0.5, 0.5, 0.25)
         else
-            -- Idle marker: type-coloured with gentle pulse
-            radius = mp.triggerRadius
-            col    = ColorF(
+            -- Idle: type colour with gentle pulse
+            col = ColorF(
                 mp.color.r,
                 mp.color.g,
                 mp.color.b,
-                mp.color.a * (0.6 + 0.4 * pulse)
+                mp.color.a * (0.55 + 0.45 * pulse)
             )
         end
 
-        debugDrawer:drawSphere(mp.pos, radius, col)
+        drawBeacon(mp, col)
 
-        -- Label floating above the sphere
-        local labelPos = vec3(mp.pos.x, mp.pos.y, mp.pos.z + radius + 3)
+        -- Floating label above the top of the beacon column.
+        -- Positioned well above terrain so the background box never obscures
+        -- ground-level geometry.  depthTest=false keeps it on top of everything.
+        local labelZ   = mp.pos.z + BEACON_ABOVE + 8
+        local labelPos = vec3(mp.pos.x, mp.pos.y, labelZ)
         local label
         if isActive then
             label = mp.name .. "  [" .. math.max(0, math.ceil(MISSION_TIME_LIMIT - mission.timer)) .. "s]"
+        elseif onCooldown then
+            label = mp.name .. "  (CD: " .. math.ceil(missionCooldowns[mp.name]) .. "s)"
         else
             local typeTag = mp.type == CHASE and "CHASE" or "ESCAPE"
             label = "[" .. typeTag .. "]  " .. mp.name
         end
-        debugDrawer:drawTextAdvanced(labelPos, String(label), ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 192))
+        -- Plain Lua string (no String() wrapper); semi-transparent background
+        debugDrawer:drawTextAdvanced(labelPos, label, ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 140))
     end
 
     -- Proximity check: start a mission when the player drives into a marker
+    -- (skipped if the marker is on cooldown or another mission is active)
     if not mission then
         local playerPos = getPlayerPos()
         if playerPos then
             for _, mp in ipairs(missionPoints) do
-                if playerPos:squaredDistance(mp.pos) <= mp.triggerRadiusSq then
+                local onCooldown = (missionCooldowns[mp.name] or 0) > 0
+                if not onCooldown
+                   and playerPos:squaredDistance(mp.pos) <= mp.triggerRadiusSq then
                     startMission(mp)
                     break
                 end
@@ -311,6 +457,9 @@ local function onUpdate(dt)
             cleanupMission(true)
         end
     end
+
+    -- Draw ImGui HUD (minimap-style compass panel)
+    drawHUD()
 end
 
 -- ── Extension hooks ────────────────────────────────────────────────────────────
