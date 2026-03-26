@@ -8,16 +8,15 @@ local M = {}
 -- ── jbeam lifecycle callbacks ─────────────────────────────────────────────────
 
 local function init(jbeamData)
-    -- This controller is attached to the jonesing_dummy jbeam slot, which is a license-plate slot.  
-    -- When the Universal Dummy Mod is loaded, it occupies this slot and thus activates this controller.  The controller's purpose is to bridge from the Vehicle-Engine (VE) context to the Game-Engine (GE) context so that propRecycler can spawn and recycle 10 jonesing_dummy pedestrians around the map as traffic.
+    -- This controller is attached to the jonesing_dummy jbeam slot, which is a license-plate slot.
+    -- When the Universal Dummy Mod is loaded, it occupies this slot and thus activates this controller.
+    -- The controller bridges from the Vehicle-Engine (VE) context to the Game-Engine (GE) context to
+    -- load the GTA-like mission system extension.
 
-    -- TODO: Start GTA Like Mission Trigger here, which will spawn random missions for the player to complete as they explore the city. These missions could include tasks such as delivering packages, racing against other NPCs, or evading the police.
-
-    -- Example:
-    -- obj:queueGameEngineLua(
-    --     "extensions.load('propRecycler');" ..
-    --     "propRecycler.spawn10DummiesAndStart({maxDistance=150,leadDistance=50,lateralJitter=10,debug=true})"
-    -- )
+    -- Load the mission manager extension in the Game-Engine context.  It draws glowing mission-start
+    -- markers at key map locations and, when the player drives into one, spawns either a fleeing
+    -- target vehicle (CHASE) or a ring of pursuing police cars (ESCAPE).
+    obj:queueGameEngineLua("extensions.load('gameplay/jonesingMissions')")
 end
 
 
