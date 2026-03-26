@@ -72,12 +72,14 @@ local POLICE_SPAWN_RADIUS = { min = 55, max = 80 }  -- ring around player
 local POLICE_COUNT        = 10
 
 -- Beacon visual constants
--- The beacon is a tall vertical column so it is visible from ground level while
--- driving AND does not clip into terrain on the overhead map.
-local BEACON_BELOW        = 30     -- metres below the defined marker Z (digs into terrain so the column looks grounded)
-local BEACON_ABOVE        = 70     -- metres above the defined marker Z
-local BEACON_STEPS        = 8      -- number of sphere slices in the vertical pillar
-local BEACON_PILLAR_R     = 3.0    -- radius of the pillar spheres (tapers toward cap)
+-- The beacon is a sky-high vertical column extending deep below and far above the
+-- marker Z so it punches through the deepest valley terrain and is visible from
+-- anywhere on the map.  The trigger uses a flat 2D (X,Y) check so altitude
+-- difference between the player and the marker never prevents a mission starting.
+local BEACON_BELOW        = 500    -- metres below the defined marker Z — pierces any terrain depth
+local BEACON_ABOVE        = 2000   -- metres above the defined marker Z — visible from across the map
+local BEACON_STEPS        = 20     -- number of sphere slices in the vertical pillar (denser = more solid)
+local BEACON_PILLAR_R     = 5.0    -- radius of the pillar spheres (wider for long-range visibility)
 local BEACON_RING_SEGS    = 16     -- segments in the ground-level trigger ring
 
 -- HUD constants
@@ -421,17 +423,23 @@ local function onUpdate(dt)
         debugDrawer:drawTextAdvanced(labelPos, label, ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 140))
     end
 
-    -- Proximity check: start a mission when the player drives into a marker
+    -- Proximity check: start a mission when the player drives into a marker.
+    -- Uses a flat 2D (X,Y) distance so height difference never prevents triggering
+    -- ("infinite height" hitbox — the beacon column stretches from deep underground
+    -- to 2000 m in the sky, so the trigger zone matches its visual footprint).
     -- (skipped if the marker is on cooldown or another mission is active)
     if not mission then
         local playerPos = getPlayerPos()
         if playerPos then
             for _, mp in ipairs(missionPoints) do
                 local onCooldown = (missionCooldowns[mp.name] or 0) > 0
-                if not onCooldown
-                   and playerPos:squaredDistance(mp.pos) <= mp.triggerRadiusSq then
-                    startMission(mp)
-                    break
+                if not onCooldown then
+                    local dx = playerPos.x - mp.pos.x
+                    local dy = playerPos.y - mp.pos.y
+                    if dx * dx + dy * dy <= mp.triggerRadiusSq then
+                        startMission(mp)
+                        break
+                    end
                 end
             end
         end
