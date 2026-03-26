@@ -230,23 +230,24 @@ local function startChase(point, playerPos)
     local offset   = vec3(math.random(-40, 40), CHASE_SPAWN_OFFSET, 0)
     local spawnPos = vec3(playerPos.x + offset.x, playerPos.y + offset.y, playerPos.z)
 
-    local id = core_vehicles.spawnNewVehicle("etk800", {
+    -- core_vehicles.spawnNewVehicle returns the vehicle object (userdata), not a number.
+    -- Extract the numeric ID via :getID() and use the object directly.
+    local targetVeh = core_vehicles.spawnNewVehicle("etk800", {
         pos    = spawnPos,
         rot    = quat(0, 0, 0, 1),
         config = "vehicles/etk800/etk800.pc",
         color  = "0.1 0.3 0.9 1",
     })
 
-    if id then
-        table.insert(spawnedVehicles, { id = id, role = "target" })
-        local targetVeh = be:getObjectByID(id)
-        if targetVeh then
-            -- Tell the target vehicle's AI to flee from the player (VE context)
-            targetVeh:queueLuaCommand(
-                "ai.setMode('flee'); " ..
-                "ai.setTargetObjectID(" .. tostring(playerID) .. ")"
-            )
-        end
+    if targetVeh then
+        table.insert(spawnedVehicles, { id = targetVeh:getID(), role = "target" })
+        -- Tell the target vehicle's AI to flee from the player (VE context)
+        targetVeh:queueLuaCommand(
+            "ai.setMode('flee'); " ..
+            "ai.setTargetObjectID(" .. tostring(playerID) .. ")"
+        )
+        -- Re-enter the player vehicle so the camera does not follow the spawned AI
+        be:enterVehicle(0, playerVeh)
     end
 
     notify("info",
@@ -271,25 +272,26 @@ local function startEscape(point, playerPos)
             playerPos.z
         )
 
-        local id = core_vehicles.spawnNewVehicle("sunburst", {
+        -- core_vehicles.spawnNewVehicle returns the vehicle object (userdata), not a number.
+        local policeVeh = core_vehicles.spawnNewVehicle("sunburst", {
             pos    = spawnPos,
             rot    = quat(0, 0, 0, 1),
             config = "vehicles/sunburst/police.pc",
             color  = "1 1 1 1",
         })
 
-        if id then
-            table.insert(spawnedVehicles, { id = id, role = "police" })
-            local policeVeh = be:getObjectByID(id)
-            if policeVeh then
-                -- Tell the police AI to chase the player (VE context)
-                policeVeh:queueLuaCommand(
-                    "ai.setMode('chase'); " ..
-                    "ai.setTargetObjectID(" .. tostring(playerID) .. ")"
-                )
-            end
+        if policeVeh then
+            table.insert(spawnedVehicles, { id = policeVeh:getID(), role = "police" })
+            -- Tell the police AI to chase the player (VE context)
+            policeVeh:queueLuaCommand(
+                "ai.setMode('chase'); " ..
+                "ai.setTargetObjectID(" .. tostring(playerID) .. ")"
+            )
         end
     end
+
+    -- Re-enter the player vehicle after all police spawn so the camera stays on the player
+    be:enterVehicle(0, playerVeh)
 
     notify("warning",
         "MISSION: " .. point.name,
