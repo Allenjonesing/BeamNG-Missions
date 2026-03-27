@@ -101,10 +101,6 @@ for _, mp in ipairs(missionPoints) do
 end
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────
--- Forward declaration: cleanupMission is defined later but referenced by drawHUD
--- (the quit button) which must be declared first.
-local cleanupMission
-
 local function getPlayerVehicle()
     return be:getPlayerVehicle(0)
 end
@@ -159,107 +155,6 @@ local function drawBeacon(mp, col)
 
     -- Large cap sphere at the very top — clearly visible from far away
     debugDrawer:drawSphere(vec3(cx, cy, topZ), mp.triggerRadius * 0.45, col)
-end
-
--- ── ImGui HUD panel ────────────────────────────────────────────────────────────
--- Draws a compact compass panel in the top-left corner showing every mission
--- point with its type, name, compass direction and distance.  This acts as the
--- minimap / navigation guide so the player can find missions while driving.
-
--- Returns the distance (metres) from the player to the first alive CHASE target,
--- or nil if there is none (not a CHASE mission, or target already destroyed/gone).
-local function getChaseTargetDist(playerPos)
-    for _, vd in ipairs(spawnedVehicles) do
-        if vd.role == "target" then
-            local v = be:getObjectByID(vd.id)
-            if v then
-                return playerPos:distance(v:getPosition())
-            end
-        end
-    end
-    return nil
-end
-
-local function drawHUD()
-    if not im then return end
-
-    local playerPos = getPlayerPos()
-    if not playerPos then return end
-
-    im.SetNextWindowSize(im.ImVec2(HUD_WINDOW_WIDTH, 0), im.Cond_Always)
-    im.SetNextWindowPos(im.ImVec2(10, 10), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.82)
-
-    local winFlags = bit.bor(
-        im.WindowFlags_NoTitleBar,
-        im.WindowFlags_NoResize,
-        im.WindowFlags_NoMove,
-        im.WindowFlags_NoSavedSettings,
-        im.WindowFlags_NoScrollbar
-    )
-
-    local drawn = im.Begin("##jonesingHUD", nil, winFlags)
-    if drawn then
-        im.TextColored(im.ImVec4(1.0, 0.85, 0.0, 1.0), "  MISSIONS")
-        im.Separator()
-
-        for _, mp in ipairs(missionPoints) do
-            local isActive   = mission and mission.point == mp
-            local onCooldown = (missionCooldowns[mp.name] or 0) > 0
-            local dist       = playerPos:distance(mp.pos)
-            local distStr    = dist < DIST_KM_THRESHOLD
-                               and (math.floor(dist) .. " m")
-                               or  string.format("%.1f km", dist / DIST_KM_THRESHOLD)
-
-            if isActive then
-                if mp.type == CHASE then
-                    -- Show distance to the fleeing target instead of a countdown
-                    local tDist = getChaseTargetDist(playerPos)
-                    local tStr  = tDist and (math.floor(tDist) .. " m") or "??"
-                    im.TextColored(im.ImVec4(1.0, 1.0, 0.0, 1.0),
-                        "  >> " .. mp.name)
-                    im.TextColored(im.ImVec4(1.0, 0.65, 0.0, 1.0),
-                        "       Target: " .. tStr .. " / " .. CHASE_ESCAPE_DISTANCE .. " m limit")
-                else
-                    -- ESCAPE: show countdown timer
-                    local rem = math.max(0, math.ceil(ESCAPE_TIME_LIMIT - mission.timer))
-                    im.TextColored(im.ImVec4(1.0, 1.0, 0.0, 1.0),
-                        "  >> " .. mp.name .. "  [" .. rem .. "s]")
-                end
-
-            elseif onCooldown then
-                im.TextColored(im.ImVec4(0.45, 0.45, 0.45, 1.0),
-                    "  [--] " .. mp.name)
-                im.TextColored(im.ImVec4(0.40, 0.40, 0.40, 1.0),
-                    "       CD: " .. math.ceil(missionCooldowns[mp.name]) .. "s")
-
-            else
-                local typeTag = mp.type == CHASE and "C" or "E"
-                local dx      = mp.pos.x - playerPos.x
-                local dy      = mp.pos.y - playerPos.y
-                local dir     = compassDir(dx, dy)
-                local tc      = mp.type == CHASE
-                                and im.ImVec4(1.0, 0.55, 0.15, 1.0)
-                                or  im.ImVec4(0.25, 0.55, 1.0,  1.0)
-
-                im.TextColored(tc, "  [" .. typeTag .. "] " .. mp.name)
-                im.TextColored(im.ImVec4(0.75, 0.75, 0.75, 1.0),
-                    "       " .. dir .. "  " .. distStr)
-            end
-        end
-
-        -- Quit button — only shown while a mission is active
-        if mission then
-            im.Separator()
-            im.PushStyleColor2(im.Col_Button,        im.ImVec4(0.55, 0.10, 0.10, 0.85))
-            im.PushStyleColor2(im.Col_ButtonHovered, im.ImVec4(0.75, 0.15, 0.15, 1.00))
-            if im.Button("  [ QUIT MISSION ]  ") then
-                cleanupMission(false)
-            end
-            im.PopStyleColor(2)
-        end
-    end
-    im.End()
 end
 
 -- ── Mission start helpers ──────────────────────────────────────────────────────
@@ -374,7 +269,7 @@ local function startMission(point)
     end
 end
 
-cleanupMission = function(success, failMsg)
+local function cleanupMission(success, failMsg)
     if not mission then return end
 
     -- Start a cooldown so the player does not re-trigger by staying in the zone
@@ -396,6 +291,107 @@ cleanupMission = function(success, failMsg)
     end
 
     mission = nil
+end
+
+-- ── ImGui HUD panel ────────────────────────────────────────────────────────────
+-- Draws a compact compass panel in the top-left corner showing every mission
+-- point with its type, name, compass direction and distance.  This acts as the
+-- minimap / navigation guide so the player can find missions while driving.
+
+-- Returns the distance (metres) from the player to the first alive CHASE target,
+-- or nil if there is none (not a CHASE mission, or target already destroyed/gone).
+local function getChaseTargetDist(playerPos)
+    for _, vd in ipairs(spawnedVehicles) do
+        if vd.role == "target" then
+            local v = be:getObjectByID(vd.id)
+            if v then
+                return playerPos:distance(v:getPosition())
+            end
+        end
+    end
+    return nil
+end
+
+local function drawHUD()
+    if not im then return end
+
+    local playerPos = getPlayerPos()
+    if not playerPos then return end
+
+    im.SetNextWindowSize(im.ImVec2(HUD_WINDOW_WIDTH, 0), im.Cond_Always)
+    im.SetNextWindowPos(im.ImVec2(10, 10), im.Cond_Always)
+    im.SetNextWindowBgAlpha(0.82)
+
+    local winFlags = bit.bor(
+        im.WindowFlags_NoTitleBar,
+        im.WindowFlags_NoResize,
+        im.WindowFlags_NoMove,
+        im.WindowFlags_NoSavedSettings,
+        im.WindowFlags_NoScrollbar
+    )
+
+    local drawn = im.Begin("##jonesingHUD", nil, winFlags)
+    if drawn then
+        im.TextColored(im.ImVec4(1.0, 0.85, 0.0, 1.0), "  MISSIONS")
+        im.Separator()
+
+        for _, mp in ipairs(missionPoints) do
+            local isActive   = mission and mission.point == mp
+            local onCooldown = (missionCooldowns[mp.name] or 0) > 0
+            local dist       = playerPos:distance(mp.pos)
+            local distStr    = dist < DIST_KM_THRESHOLD
+                               and string.format("%d m", math.floor(dist))
+                               or  string.format("%.1f km", dist / DIST_KM_THRESHOLD)
+
+            if isActive then
+                if mp.type == CHASE then
+                    -- Show distance to the fleeing target instead of a countdown
+                    local tDist = getChaseTargetDist(playerPos)
+                    local tStr  = tDist and string.format("%d m", math.floor(tDist)) or "??"
+                    im.TextColored(im.ImVec4(1.0, 1.0, 0.0, 1.0),
+                        "  >> " .. mp.name)
+                    im.TextColored(im.ImVec4(1.0, 0.65, 0.0, 1.0),
+                        string.format("       Target: %s / %d m limit", tStr, CHASE_ESCAPE_DISTANCE))
+                else
+                    -- ESCAPE: show countdown timer
+                    local rem = math.max(0, math.ceil(ESCAPE_TIME_LIMIT - mission.timer))
+                    im.TextColored(im.ImVec4(1.0, 1.0, 0.0, 1.0),
+                        string.format("  >> %s  [%ds]", mp.name, rem))
+                end
+
+            elseif onCooldown then
+                im.TextColored(im.ImVec4(0.45, 0.45, 0.45, 1.0),
+                    "  [--] " .. mp.name)
+                im.TextColored(im.ImVec4(0.40, 0.40, 0.40, 1.0),
+                    string.format("       CD: %ds", math.ceil(missionCooldowns[mp.name])))
+
+            else
+                local typeTag = mp.type == CHASE and "C" or "E"
+                local dx      = mp.pos.x - playerPos.x
+                local dy      = mp.pos.y - playerPos.y
+                local dir     = compassDir(dx, dy)
+                local tc      = mp.type == CHASE
+                                and im.ImVec4(1.0, 0.55, 0.15, 1.0)
+                                or  im.ImVec4(0.25, 0.55, 1.0,  1.0)
+
+                im.TextColored(tc, string.format("  [%s] %s", typeTag, mp.name))
+                im.TextColored(im.ImVec4(0.75, 0.75, 0.75, 1.0),
+                    string.format("       %s  %s", dir, distStr))
+            end
+        end
+
+        -- Quit button — only shown while a mission is active
+        if mission then
+            im.Separator()
+            im.PushStyleColor2(im.Col_Button,        im.ImVec4(0.55, 0.10, 0.10, 0.85))
+            im.PushStyleColor2(im.Col_ButtonHovered, im.ImVec4(0.75, 0.15, 0.15, 1.00))
+            if im.Button("  [ QUIT MISSION ]  ") then
+                cleanupMission(false)
+            end
+            im.PopStyleColor(2)
+        end
+    end
+    im.End()
 end
 
 -- ── Success conditions ─────────────────────────────────────────────────────────
@@ -492,15 +488,17 @@ local function onUpdate(dt)
         if isActive then
             if mp.type == CHASE then
                 local tDist = getChaseTargetDist(playerPos)
-                label = mp.name .. "  [" .. (tDist and (math.floor(tDist) .. " m") or "??") .. "]"
+                label = string.format("%s  [%s]", mp.name,
+                    tDist and string.format("%d m", math.floor(tDist)) or "??")
             else
-                label = mp.name .. "  [" .. math.max(0, math.ceil(ESCAPE_TIME_LIMIT - mission.timer)) .. "s]"
+                label = string.format("%s  [%ds]", mp.name,
+                    math.max(0, math.ceil(ESCAPE_TIME_LIMIT - mission.timer)))
             end
         elseif onCooldown then
-            label = mp.name .. "  (CD: " .. math.ceil(missionCooldowns[mp.name]) .. "s)"
+            label = string.format("%s  (CD: %ds)", mp.name, math.ceil(missionCooldowns[mp.name]))
         else
             local typeTag = mp.type == CHASE and "CHASE" or "ESCAPE"
-            label = "[" .. typeTag .. "]  " .. mp.name
+            label = string.format("[%s]  %s", typeTag, mp.name)
         end
         -- Plain Lua string (no String() wrapper); semi-transparent background
         debugDrawer:drawTextAdvanced(labelPos, label, ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 140))
