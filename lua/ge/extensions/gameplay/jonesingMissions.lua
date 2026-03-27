@@ -189,13 +189,14 @@ local function startChase(point, playerPos)
         -- Queue a VE-side periodic damage monitor.  When damage >= threshold it
         -- calls back to GE via sendGameEngineLua so we never touch getDamage() from
         -- the GE side (it does not exist there).
+        -- obj:getDamage() is used with pcall because the method was renamed in newer
+        -- BeamNG versions; the fallback reads obj.damage directly as a field.
         targetVeh:queueLuaCommand(string.format([[
-            local function _jmDmgCheck()
-                if obj:getDamage() >= %f then
-                    obj:sendGameEngineLua("extensions.gameplay_jonesingMissions.reportTargetDamaged(%d)")
-                end
+            local ok, d = pcall(function() return obj:getDamage() end)
+            if not ok then d = type(obj.damage) == 'number' and obj.damage or 0 end
+            if d >= %f then
+                obj:sendGameEngineLua("extensions.gameplay_jonesingMissions.reportTargetDamaged(%d)")
             end
-            _jmDmgCheck()
         ]], CHASE_DAMAGE_THRESH, targetID))
         -- Re-enter the player vehicle so the camera does not follow the spawned AI
         be:enterVehicle(0, playerVeh)
@@ -285,10 +286,10 @@ local function cleanupMission(success, failMsg)
     missionCooldowns[mission.point.name] = MISSION_COOLDOWN
 
     -- Despawn all mission-spawned vehicles
+    -- scenetree.findObjectById is used for deletion; be:deleteObjectByID does not exist.
     for _, vd in ipairs(spawnedVehicles) do
-        if be:getObjectByID(vd.id) then
-            be:deleteObjectByID(vd.id)
-        end
+        local vehObj = scenetree.findObjectById(vd.id)
+        if vehObj then vehObj:delete() end
     end
     spawnedVehicles   = {}
     destroyedTargets  = {}
@@ -441,9 +442,13 @@ local function checkChaseSuccess()
             if v == nil then
                 -- Vehicle removed from the scene → counts as destroyed
             elseif not destroyedTargets[vd.id] then
-                -- Not yet confirmed; ask VE side to check damage this frame
+                -- Not yet confirmed; ask VE side to check damage this frame.
+                -- pcall guards against getDamage() being nil in newer BeamNG versions;
+                -- falls back to reading obj.damage as a direct field.
                 v:queueLuaCommand(string.format(
-                    "if obj:getDamage()>=%f then" ..
+                    "local ok,d=pcall(function() return obj:getDamage() end);" ..
+                    "if not ok then d=type(obj.damage)=='number' and obj.damage or 0 end;" ..
+                    "if d>=%f then" ..
                     " obj:sendGameEngineLua('extensions.gameplay_jonesingMissions.reportTargetDamaged(%d)')" ..
                     " end",
                     CHASE_DAMAGE_THRESH, vd.id
