@@ -69,6 +69,7 @@ local ESCAPE_MIN_DISTANCE   = 250    -- metres: all police beyond this = escaped
 local CHASE_DAMAGE_THRESH   = 0.75   -- getDamage() value that counts as "destroyed"
 local CHASE_ESCAPE_DISTANCE = 300    -- metres: target beyond this = got away (CHASE fail)
 local CHASE_SPAWN_OFFSET    = 80     -- metres ahead of player to spawn the target
+local CHASE_TARGET_MODEL    = "etk800"  -- vehicle model spawned as the CHASE target
 local POLICE_SPAWN_RADIUS   = { min = 40, max = 60 }  -- ring around player
 local POLICE_COUNT          = 3      -- kept small for performance
 
@@ -170,7 +171,7 @@ local function startChase(point, playerPos)
 
     -- core_vehicles.spawnNewVehicle returns the vehicle object (userdata), not a number.
     -- Extract the numeric ID via :getID() and use the object directly.
-    local targetVeh = core_vehicles.spawnNewVehicle("etk800", {
+    local targetVeh = core_vehicles.spawnNewVehicle(CHASE_TARGET_MODEL, {
         pos    = spawnPos,
         rot    = quat(0, 0, 0, 1),
         config = "vehicles/etk800/etk800.pc",
@@ -200,7 +201,7 @@ local function startChase(point, playerPos)
         be:enterVehicle(0, playerVeh)
         notify("info",
             "MISSION: " .. point.name,
-            string.format("Blue etk800 is fleeing — destroy it before it gets %d m away!", CHASE_ESCAPE_DISTANCE))
+            string.format("%s is fleeing — destroy it before it gets %d m away!", CHASE_TARGET_MODEL, CHASE_ESCAPE_DISTANCE))
     else
         notify("error", "Spawn Failed", "Could not spawn chase target — mission aborted.")
         cleanupMission(false, "Target failed to spawn.")
