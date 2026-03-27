@@ -198,12 +198,13 @@ local function startChase(point, playerPos)
         ]], CHASE_DAMAGE_THRESH, targetID))
         -- Re-enter the player vehicle so the camera does not follow the spawned AI
         be:enterVehicle(0, playerVeh)
+        notify("info",
+            "MISSION: " .. point.name,
+            string.format("Blue etk800 is fleeing — destroy it before it gets %d m away!", CHASE_ESCAPE_DISTANCE))
+    else
+        notify("error", "Spawn Failed", "Could not spawn chase target — mission aborted.")
+        cleanupMission(false, "Target failed to spawn.")
     end
-
-    notify("info",
-        "MISSION: " .. point.name,
-        "Catch and DESTROY the fleeing vehicle!  Don't let it escape past " .. CHASE_ESCAPE_DISTANCE .. " m!"
-    )
 end
 
 local function startEscape(point, playerPos)
@@ -246,9 +247,16 @@ local function startEscape(point, playerPos)
     -- Re-enter the player vehicle after all police spawn so the camera stays on the player
     be:enterVehicle(0, playerVeh)
 
+    local spawned = mission.policeSpawned or 0
+    if spawned == 0 then
+        notify("error", "Spawn Failed", "No police vehicles could spawn — mission aborted.")
+        cleanupMission(false, "Police failed to spawn.")
+        return
+    end
+
     notify("warning",
         "MISSION: " .. point.name,
-        "WANTED!  Escape from ALL " .. POLICE_COUNT .. " police vehicles!  You have " .. ESCAPE_TIME_LIMIT .. "s."
+        string.format("WANTED!  %d police unit%s pursuing you!  Escape them all!", spawned, spawned ~= 1 and "s" or "")
     )
 end
 
@@ -299,8 +307,9 @@ end
 -- minimap / navigation guide so the player can find missions while driving.
 
 -- Returns the distance (metres) from the player to the first alive CHASE target,
--- or nil if there is none (not a CHASE mission, or target already destroyed/gone).
+-- or nil if there is none (not a CHASE mission, target gone, or playerPos is nil).
 local function getChaseTargetDist(playerPos)
+    if not playerPos then return nil end   -- guard: no player vehicle this frame
     for _, vd in ipairs(spawnedVehicles) do
         if vd.role == "target" then
             local v = be:getObjectByID(vd.id)
@@ -389,6 +398,31 @@ local function drawHUD()
                 cleanupMission(false)
             end
             im.PopStyleColor(2)
+
+            -- Debug / status section: live mission internals visible during play
+            im.Separator()
+            im.TextColored(im.ImVec4(0.6, 0.6, 0.6, 1.0), "  -- debug --")
+            im.TextColored(im.ImVec4(0.55, 0.55, 0.55, 1.0),
+                string.format("  t = %.1f s", mission.timer))
+            if mission.point.type == CHASE then
+                local tDist = getChaseTargetDist(playerPos)
+                im.TextColored(im.ImVec4(0.55, 0.55, 0.55, 1.0),
+                    string.format("  target: %s / %d m",
+                        tDist and string.format("%.0f m", tDist) or "gone", CHASE_ESCAPE_DISTANCE))
+            elseif mission.point.type == ESCAPE then
+                -- Count surviving police
+                local alive = 0
+                for _, vd in ipairs(spawnedVehicles) do
+                    if vd.role == "police" and be:getObjectByID(vd.id) then
+                        alive = alive + 1
+                    end
+                end
+                im.TextColored(im.ImVec4(0.55, 0.55, 0.55, 1.0),
+                    string.format("  police: %d alive / %d spawned",
+                        alive, mission.policeSpawned or 0))
+                im.TextColored(im.ImVec4(0.55, 0.55, 0.55, 1.0),
+                    string.format("  time left: %.0f s", math.max(0, ESCAPE_TIME_LIMIT - mission.timer)))
+            end
         end
     end
     im.End()
@@ -446,6 +480,11 @@ end
 -- ── Per-frame update ───────────────────────────────────────────────────────────
 local function onUpdate(dt)
     pulseTime = pulseTime + dt * PULSE_SPEED
+
+    -- Resolve player position once per frame.  Used in the beacon label loop, the
+    -- proximity check, the mission tick, and the HUD.  May be nil if there is no
+    -- player vehicle (e.g. spectator mode) — all downstream callers must guard.
+    local playerPos = getPlayerPos()
 
     -- Tick post-mission cooldowns
     for name, cd in pairs(missionCooldowns) do
@@ -509,18 +548,15 @@ local function onUpdate(dt)
     -- ("infinite height" hitbox — the beacon column stretches from deep underground
     -- to 2000 m in the sky, so the trigger zone matches its visual footprint).
     -- (skipped if the marker is on cooldown or another mission is active)
-    if not mission then
-        local playerPos = getPlayerPos()
-        if playerPos then
-            for _, mp in ipairs(missionPoints) do
-                local onCooldown = (missionCooldowns[mp.name] or 0) > 0
-                if not onCooldown then
-                    local dx = playerPos.x - mp.pos.x
-                    local dy = playerPos.y - mp.pos.y
-                    if dx * dx + dy * dy <= mp.triggerRadiusSq then
-                        startMission(mp)
-                        break
-                    end
+    if not mission and playerPos then
+        for _, mp in ipairs(missionPoints) do
+            local onCooldown = (missionCooldowns[mp.name] or 0) > 0
+            if not onCooldown then
+                local dx = playerPos.x - mp.pos.x
+                local dy = playerPos.y - mp.pos.y
+                if dx * dx + dy * dy <= mp.triggerRadiusSq then
+                    startMission(mp)
+                    break
                 end
             end
         end
@@ -532,13 +568,10 @@ local function onUpdate(dt)
 
         if mission.point.type == CHASE then
             -- CHASE: fail when the target gets too far away; no time limit
-            local chasePlayerPos = getPlayerPos()
-            if chasePlayerPos then
-                local tDist = getChaseTargetDist(chasePlayerPos)
-                if tDist and tDist > CHASE_ESCAPE_DISTANCE then
-                    cleanupMission(false, "The target got away!")
-                    return
-                end
+            local tDist = getChaseTargetDist(playerPos)
+            if tDist and tDist > CHASE_ESCAPE_DISTANCE then
+                cleanupMission(false, "The target got away!")
+                return
             end
             if checkChaseSuccess() then
                 cleanupMission(true)
