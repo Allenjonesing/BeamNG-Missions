@@ -62,14 +62,15 @@ local missionPoints = {
 }
 
 -- ── Tuning constants ───────────────────────────────────────────────────────────
-local PULSE_SPEED         = 1.5    -- marker pulse rate (radians / second)
-local MISSION_TIME_LIMIT  = 120    -- seconds before failure
-local MISSION_COOLDOWN    = 10     -- seconds before the same marker can re-trigger
-local ESCAPE_MIN_DISTANCE = 250    -- metres: all police beyond this = escaped
-local CHASE_DAMAGE_THRESH = 0.75   -- getDamage() value that counts as "destroyed"
-local CHASE_SPAWN_OFFSET  = 80     -- metres ahead of player to spawn the target
-local POLICE_SPAWN_RADIUS = { min = 55, max = 80 }  -- ring around player
-local POLICE_COUNT        = 10
+local PULSE_SPEED           = 1.5    -- marker pulse rate (radians / second)
+local ESCAPE_TIME_LIMIT     = 120    -- seconds before ESCAPE mission fails
+local MISSION_COOLDOWN      = 10     -- seconds before the same marker can re-trigger
+local ESCAPE_MIN_DISTANCE   = 250    -- metres: all police beyond this = escaped
+local CHASE_DAMAGE_THRESH   = 0.75   -- getDamage() value that counts as "destroyed"
+local CHASE_ESCAPE_DISTANCE = 300    -- metres: target beyond this = got away (CHASE fail)
+local CHASE_SPAWN_OFFSET    = 80     -- metres ahead of player to spawn the target
+local POLICE_SPAWN_RADIUS   = { min = 40, max = 60 }  -- ring around player
+local POLICE_COUNT          = 3      -- kept small for performance
 
 -- Beacon visual constants
 -- The beacon is a sky-high vertical column extending deep below and far above the
@@ -100,6 +101,10 @@ for _, mp in ipairs(missionPoints) do
 end
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────
+-- Forward declaration: cleanupMission is defined later but referenced by drawHUD
+-- (the quit button) which must be declared first.
+local cleanupMission
+
 local function getPlayerVehicle()
     return be:getPlayerVehicle(0)
 end
@@ -160,6 +165,21 @@ end
 -- Draws a compact compass panel in the top-left corner showing every mission
 -- point with its type, name, compass direction and distance.  This acts as the
 -- minimap / navigation guide so the player can find missions while driving.
+
+-- Returns the distance (metres) from the player to the first alive CHASE target,
+-- or nil if there is none (not a CHASE mission, or target already destroyed/gone).
+local function getChaseTargetDist(playerPos)
+    for _, vd in ipairs(spawnedVehicles) do
+        if vd.role == "target" then
+            local v = be:getObjectByID(vd.id)
+            if v then
+                return playerPos:distance(v:getPosition())
+            end
+        end
+    end
+    return nil
+end
+
 local function drawHUD()
     if not im then return end
 
@@ -192,9 +212,20 @@ local function drawHUD()
                                or  string.format("%.1f km", dist / DIST_KM_THRESHOLD)
 
             if isActive then
-                local rem = math.max(0, math.ceil(MISSION_TIME_LIMIT - mission.timer))
-                im.TextColored(im.ImVec4(1.0, 1.0, 0.0, 1.0),
-                    "  >> " .. mp.name .. "  [" .. rem .. "s]")
+                if mp.type == CHASE then
+                    -- Show distance to the fleeing target instead of a countdown
+                    local tDist = getChaseTargetDist(playerPos)
+                    local tStr  = tDist and (math.floor(tDist) .. " m") or "??"
+                    im.TextColored(im.ImVec4(1.0, 1.0, 0.0, 1.0),
+                        "  >> " .. mp.name)
+                    im.TextColored(im.ImVec4(1.0, 0.65, 0.0, 1.0),
+                        "       Target: " .. tStr .. " / " .. CHASE_ESCAPE_DISTANCE .. " m limit")
+                else
+                    -- ESCAPE: show countdown timer
+                    local rem = math.max(0, math.ceil(ESCAPE_TIME_LIMIT - mission.timer))
+                    im.TextColored(im.ImVec4(1.0, 1.0, 0.0, 1.0),
+                        "  >> " .. mp.name .. "  [" .. rem .. "s]")
+                end
 
             elseif onCooldown then
                 im.TextColored(im.ImVec4(0.45, 0.45, 0.45, 1.0),
@@ -215,6 +246,17 @@ local function drawHUD()
                 im.TextColored(im.ImVec4(0.75, 0.75, 0.75, 1.0),
                     "       " .. dir .. "  " .. distStr)
             end
+        end
+
+        -- Quit button — only shown while a mission is active
+        if mission then
+            im.Separator()
+            im.PushStyleColor2(im.Col_Button,        im.ImVec4(0.55, 0.10, 0.10, 0.85))
+            im.PushStyleColor2(im.Col_ButtonHovered, im.ImVec4(0.75, 0.15, 0.15, 1.00))
+            if im.Button("  [ QUIT MISSION ]  ") then
+                cleanupMission(false)
+            end
+            im.PopStyleColor(2)
         end
     end
     im.End()
@@ -265,7 +307,7 @@ local function startChase(point, playerPos)
 
     notify("info",
         "MISSION: " .. point.name,
-        "Catch and DESTROY the fleeing vehicle!  You have " .. MISSION_TIME_LIMIT .. "s."
+        "Catch and DESTROY the fleeing vehicle!  Don't let it escape past " .. CHASE_ESCAPE_DISTANCE .. " m!"
     )
 end
 
@@ -311,7 +353,7 @@ local function startEscape(point, playerPos)
 
     notify("warning",
         "MISSION: " .. point.name,
-        "WANTED!  Escape from ALL " .. POLICE_COUNT .. " police vehicles!  You have " .. MISSION_TIME_LIMIT .. "s."
+        "WANTED!  Escape from ALL " .. POLICE_COUNT .. " police vehicles!  You have " .. ESCAPE_TIME_LIMIT .. "s."
     )
 end
 
@@ -332,7 +374,7 @@ local function startMission(point)
     end
 end
 
-local function cleanupMission(success)
+cleanupMission = function(success, failMsg)
     if not mission then return end
 
     -- Start a cooldown so the player does not re-trigger by staying in the zone
@@ -350,7 +392,7 @@ local function cleanupMission(success)
     if success then
         notify("success", "Mission Complete!", "Well done!  '" .. mission.point.name .. "' completed!")
     else
-        notify("error",   "Mission Failed!",   "'" .. mission.point.name .. "' failed.")
+        notify("error", "Mission Failed!", failMsg or ("'" .. mission.point.name .. "' failed."))
     end
 
     mission = nil
@@ -448,7 +490,12 @@ local function onUpdate(dt)
         local labelPos = vec3(mp.pos.x, mp.pos.y, labelZ)
         local label
         if isActive then
-            label = mp.name .. "  [" .. math.max(0, math.ceil(MISSION_TIME_LIMIT - mission.timer)) .. "s]"
+            if mp.type == CHASE then
+                local tDist = getChaseTargetDist(playerPos)
+                label = mp.name .. "  [" .. (tDist and (math.floor(tDist) .. " m") or "??") .. "]"
+            else
+                label = mp.name .. "  [" .. math.max(0, math.ceil(ESCAPE_TIME_LIMIT - mission.timer)) .. "s]"
+            end
         elseif onCooldown then
             label = mp.name .. "  (CD: " .. math.ceil(missionCooldowns[mp.name]) .. "s)"
         else
@@ -485,20 +532,29 @@ local function onUpdate(dt)
     if mission then
         mission.timer = mission.timer + dt
 
-        if mission.timer >= MISSION_TIME_LIMIT then
-            cleanupMission(false)
-            return
-        end
-
-        local success = false
         if mission.point.type == CHASE then
-            success = checkChaseSuccess()
-        elseif mission.point.type == ESCAPE then
-            success = checkEscapeSuccess()
-        end
+            -- CHASE: fail when the target gets too far away; no time limit
+            local chasePlayerPos = getPlayerPos()
+            if chasePlayerPos then
+                local tDist = getChaseTargetDist(chasePlayerPos)
+                if tDist and tDist > CHASE_ESCAPE_DISTANCE then
+                    cleanupMission(false, "The target got away!")
+                    return
+                end
+            end
+            if checkChaseSuccess() then
+                cleanupMission(true)
+            end
 
-        if success then
-            cleanupMission(true)
+        elseif mission.point.type == ESCAPE then
+            -- ESCAPE: fail when the time limit expires
+            if mission.timer >= ESCAPE_TIME_LIMIT then
+                cleanupMission(false)
+                return
+            end
+            if checkEscapeSuccess() then
+                cleanupMission(true)
+            end
         end
     end
 
