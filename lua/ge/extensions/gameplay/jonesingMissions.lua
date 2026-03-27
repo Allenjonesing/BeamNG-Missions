@@ -78,8 +78,8 @@ local POLICE_COUNT          = 3      -- kept small for performance
 -- marker Z so it punches through the deepest valley terrain and is visible from
 -- anywhere on the map.  The trigger uses a flat 2D (X,Y) check so altitude
 -- difference between the player and the marker never prevents a mission starting.
-local BEACON_BELOW        = 500    -- metres below the defined marker Z — pierces any terrain depth
-local BEACON_ABOVE        = 2000   -- metres above the defined marker Z — visible from across the map
+local BEACON_BELOW        = 100    -- metres below the defined marker Z — pierces valley terrain
+local BEACON_ABOVE        = 300    -- metres above the defined marker Z — visible from a distance
 local BEACON_STEPS        = 20     -- number of sphere slices in the vertical pillar (denser = more solid)
 local BEACON_PILLAR_R     = 5.0    -- radius of the pillar spheres (wider for long-range visibility)
 local BEACON_RING_SEGS    = 16     -- segments in the ground-level trigger ring
