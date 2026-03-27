@@ -87,10 +87,11 @@ local HUD_WINDOW_WIDTH    = 255    -- width of the ImGui compass panel (pixels)
 local DIST_KM_THRESHOLD   = 1000   -- metres; distances above this are shown in km
 
 -- ── State ──────────────────────────────────────────────────────────────────────
-local pulseTime       = 0
-local mission         = nil   -- active mission table, or nil when idle
-local spawnedVehicles = {}    -- list of { id = <vehicleID>, role = "target"|"police" }
-local missionCooldowns = {}   -- mp.name -> seconds remaining on cooldown
+local pulseTime         = 0
+local mission           = nil   -- active mission table, or nil when idle
+local spawnedVehicles   = {}    -- list of { id = <vehicleID>, role = "target"|"police" }
+local missionCooldowns  = {}    -- mp.name -> seconds remaining on cooldown
+local destroyedTargets  = {}    -- [vehicleID] = true when VE reports damage >= threshold
 
 -- Pre-compute per-marker values that are constant between frames
 for _, mp in ipairs(missionPoints) do
@@ -240,12 +241,24 @@ local function startChase(point, playerPos)
     })
 
     if targetVeh then
-        table.insert(spawnedVehicles, { id = targetVeh:getID(), role = "target" })
+        local targetID = targetVeh:getID()
+        table.insert(spawnedVehicles, { id = targetID, role = "target" })
         -- Tell the target vehicle's AI to flee from the player (VE context)
         targetVeh:queueLuaCommand(
             "ai.setMode('flee'); " ..
             "ai.setTargetObjectID(" .. tostring(playerID) .. ")"
         )
+        -- Queue a VE-side periodic damage monitor.  When damage >= threshold it
+        -- calls back to GE via sendGameEngineLua so we never touch getDamage() from
+        -- the GE side (it does not exist there).
+        targetVeh:queueLuaCommand(string.format([[
+            local function _jmDmgCheck()
+                if obj:getDamage() >= %f then
+                    obj:sendGameEngineLua("extensions.gameplay_jonesingMissions.reportTargetDamaged(%d)")
+                end
+            end
+            _jmDmgCheck()
+        ]], CHASE_DAMAGE_THRESH, targetID))
         -- Re-enter the player vehicle so the camera does not follow the spawned AI
         be:enterVehicle(0, playerVeh)
     end
@@ -273,14 +286,17 @@ local function startEscape(point, playerPos)
         )
 
         -- core_vehicles.spawnNewVehicle returns the vehicle object (userdata), not a number.
-        local policeVeh = core_vehicles.spawnNewVehicle("sunburst", {
-            pos    = spawnPos,
-            rot    = quat(0, 0, 0, 1),
-            config = "vehicles/sunburst/police.pc",
-            color  = "1 1 1 1",
+        -- Use etk800 (confirmed available); sunburst police.pc config does not ship in
+        -- the base game and causes a crash.  White/grey colouring differentiates them
+        -- visually from the blue CHASE target.
+        local policeVeh = core_vehicles.spawnNewVehicle("etk800", {
+            pos   = spawnPos,
+            rot   = quat(0, 0, 0, 1),
+            color = "0.85 0.85 0.85 1",
         })
 
         if policeVeh then
+            mission.policeSpawned = (mission.policeSpawned or 0) + 1
             table.insert(spawnedVehicles, { id = policeVeh:getID(), role = "police" })
             -- Tell the police AI to chase the player (VE context)
             policeVeh:queueLuaCommand(
@@ -307,7 +323,7 @@ local function startMission(point)
     if not playerPos then return end
 
     spawnedVehicles = {}
-    mission = { point = point, timer = 0 }
+    mission = { point = point, timer = 0, policeSpawned = 0 }
 
     if point.type == CHASE then
         startChase(point, playerPos)
@@ -328,7 +344,8 @@ local function cleanupMission(success)
             be:deleteObjectByID(vd.id)
         end
     end
-    spawnedVehicles = {}
+    spawnedVehicles   = {}
+    destroyedTargets  = {}
 
     if success then
         notify("success", "Mission Complete!", "Well done!  '" .. mission.point.name .. "' completed!")
@@ -341,13 +358,24 @@ end
 
 -- ── Success conditions ─────────────────────────────────────────────────────────
 local function checkChaseSuccess()
-    -- Returns true when every spawned target vehicle is destroyed or gone
+    -- Returns true when every spawned target has been confirmed destroyed.
+    -- Damage is read on the VE side (where getDamage() exists) via queueLuaCommand;
+    -- reportTargetDamaged() is called back from VE into GE when the threshold is met.
+    -- If the object is gone entirely (fell off the map) we also count it as destroyed.
     for _, vd in ipairs(spawnedVehicles) do
         if vd.role == "target" then
             local v = be:getObjectByID(vd.id)
-            -- If the object is gone (fell off map, etc.) count it as destroyed
-            if v and v:getDamage() < CHASE_DAMAGE_THRESH then
-                return false  -- target still alive
+            if v == nil then
+                -- Vehicle removed from the scene → counts as destroyed
+            elseif not destroyedTargets[vd.id] then
+                -- Not yet confirmed; ask VE side to check damage this frame
+                v:queueLuaCommand(string.format(
+                    "if obj:getDamage()>=%f then" ..
+                    " obj:sendGameEngineLua('extensions.gameplay_jonesingMissions.reportTargetDamaged(%d)')" ..
+                    " end",
+                    CHASE_DAMAGE_THRESH, vd.id
+                ))
+                return false  -- still alive
             end
         end
     end
@@ -358,8 +386,14 @@ local function checkEscapeSuccess()
     local playerPos = getPlayerPos()
     if not playerPos then return false end
 
-    -- Returns true when every police vehicle is beyond the escape distance.
-    -- A police vehicle that has been destroyed / gone from the scene is ignored.
+    -- Guard: if no police actually spawned (e.g. model load error), don't grant
+    -- instant success — abort the mission instead.
+    if not mission or (mission.policeSpawned or 0) == 0 then
+        return false
+    end
+
+    -- Returns true when every surviving police vehicle is beyond the escape distance.
+    -- Police that have been destroyed / removed from the scene are ignored.
     for _, vd in ipairs(spawnedVehicles) do
         if vd.role == "police" then
             local v = be:getObjectByID(vd.id)
@@ -486,5 +520,11 @@ end
 M.onUpdate            = onUpdate
 M.onExtensionLoaded   = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
+
+-- Called from VE-side via obj:sendGameEngineLua when a target's damage reaches the
+-- destruction threshold.  Sets a flag that checkChaseSuccess reads each frame.
+function M.reportTargetDamaged(vid)
+    destroyedTargets[vid] = true
+end
 
 return M
