@@ -131,6 +131,7 @@ local BEACON_PILLAR_R     = 2.5    -- radius of pillar spheres (m)
 local BEACON_RING_SEGS    = 12     -- segments in the ground-level trigger ring
 
 -- Destination beacon (REACH mission) — brighter and distinct from mission markers
+local DEST_BEACON_BELOW   = 40
 local DEST_BEACON_ABOVE   = 80
 local DEST_BEACON_STEPS   = 12
 local DEST_BEACON_R       = 3.0
@@ -254,11 +255,12 @@ local function drawBeacon(mp, col)
     debugDrawer:drawSphere(vec3(cx, cy, topZ), mp.triggerRadius * 0.35, col)
 end
 
--- Draws the REACH destination beacon — a bright white column of light at destPos.
+-- Draws the REACH destination beacon — a bright white full pillar at destPos.
 local function drawDestBeacon(destPos, pulse)
     local cx   = destPos.x
     local cy   = destPos.y
     local cz   = destPos.z
+    local botZ = cz - DEST_BEACON_BELOW   -- extends underground like regular beacons
     local topZ = cz + DEST_BEACON_ABOVE
     local col  = ColorF(1.0, 1.0, 1.0, 0.55 + 0.45 * pulse)
 
@@ -270,11 +272,11 @@ local function drawDestBeacon(destPos, pulse)
         debugDrawer:drawSphere(vec3(rx, ry, cz), 1.5, col)
     end
 
-    -- Column
+    -- Full vertical pillar (same style as mission markers — bottom to top)
     for s = 0, DEST_BEACON_STEPS do
         local t = s / DEST_BEACON_STEPS
-        local z = cz + t * DEST_BEACON_ABOVE
-        local r = DEST_BEACON_R * (1.0 - t * 0.3)
+        local z = botZ + t * (topZ - botZ)
+        local r = DEST_BEACON_R * (1.0 - t * 0.45)
         debugDrawer:drawSphere(vec3(cx, cy, z), r, col)
     end
 
@@ -783,6 +785,7 @@ local function tickRecyclePolice(playerPos, dt)
             end
         end
         if newSpawned > 0 then
+            be:enterVehicle(0, playerVeh)  -- reassert camera on the player vehicle
             notify("warning", "Reinforcements!",
                 string.format("%d more unit%s dispatched!", newSpawned, newSpawned > 1 and "s" or ""))
         end
@@ -807,6 +810,9 @@ local function onUpdate(dt)
     for _, mp in ipairs(missionPoints) do
         local isActive   = mission and mission.point == mp
         local onCooldown = (missionCooldowns[mp.name] or 0) > 0
+
+        -- While a mission is running, skip idle markers (no pillar clutter during gameplay)
+        if not mission or isActive or onCooldown then
         local pulse      = 0.5 + 0.5 * math.sin(pulseTime)
 
         local col
@@ -861,7 +867,8 @@ local function onUpdate(dt)
 
         debugDrawer:drawTextAdvanced(labelPos, label,
             ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 140))
-    end
+        end  -- render this marker
+    end  -- for _, mp
 
     -- ── Draw destination beacon for active REACH mission ────────────────────
     if mission and mission.point.type == REACH and mission.point.destPos then
