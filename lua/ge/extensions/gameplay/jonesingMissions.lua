@@ -123,18 +123,18 @@ local ENDURE_RECYCLE_DELAY  = 5.0    -- minimum seconds between recycling spawns
 local REACH_TIME_LIMIT      = 120    -- seconds to reach destination before failing
 local REACH_RADIUS          = 20     -- metres: arriving within this of destPos = success
 
--- Beacon visual constants — compact pillars, clearly visible without overwhelming
+-- Beacon visual constants — dense pillar so spheres overlap and form a solid column
 local BEACON_BELOW        = 40     -- metres below marker Z — pierces shallow terrain
 local BEACON_ABOVE        = 80     -- metres above marker Z — visible from ~500 m
-local BEACON_STEPS        = 12     -- sphere slices in the vertical pillar
+local BEACON_STEPS        = 40     -- sphere slices; spacing ~3 m, radius 2.5 m → solid overlap
 local BEACON_PILLAR_R     = 2.5    -- radius of pillar spheres (m)
 local BEACON_RING_SEGS    = 12     -- segments in the ground-level trigger ring
 
--- Destination beacon (REACH mission) — brighter and distinct from mission markers
+-- Destination beacon (REACH mission) — brighter and distinct from mission markers (larger radius)
 local DEST_BEACON_BELOW   = 40
 local DEST_BEACON_ABOVE   = 80
-local DEST_BEACON_STEPS   = 12
-local DEST_BEACON_R       = 3.0
+local DEST_BEACON_STEPS   = 40
+local DEST_BEACON_R       = 3.0   -- larger than BEACON_PILLAR_R so it stands out
 local DEST_BEACON_RING    = 12
 
 -- HUD constants
@@ -243,11 +243,11 @@ local function drawBeacon(mp, col)
         debugDrawer:drawSphere(vec3(rx, ry, cz), 1.0, col)
     end
 
-    -- Vertical pillar (tapers slightly toward the top)
+    -- Vertical pillar (gentle taper keeps spheres large enough to overlap at every step)
     for s = 0, BEACON_STEPS do
         local t = s / BEACON_STEPS
         local z = botZ + t * (topZ - botZ)
-        local r = BEACON_PILLAR_R * (1.0 - t * 0.45)
+        local r = BEACON_PILLAR_R * (1.0 - t * 0.20)
         debugDrawer:drawSphere(vec3(cx, cy, z), r, col)
     end
 
@@ -272,11 +272,11 @@ local function drawDestBeacon(destPos, pulse)
         debugDrawer:drawSphere(vec3(rx, ry, cz), 1.5, col)
     end
 
-    -- Full vertical pillar (same style as mission markers — bottom to top)
+    -- Full vertical pillar (same style as mission markers — bottom to top, gentle taper)
     for s = 0, DEST_BEACON_STEPS do
         local t = s / DEST_BEACON_STEPS
         local z = botZ + t * (topZ - botZ)
-        local r = DEST_BEACON_R * (1.0 - t * 0.45)
+        local r = DEST_BEACON_R * (1.0 - t * 0.20)
         debugDrawer:drawSphere(vec3(cx, cy, z), r, col)
     end
 
@@ -770,24 +770,17 @@ local function tickRecyclePolice(playerPos, dt)
         if vd.role == "police" then aliveCount = aliveCount + 1 end
     end
 
-    -- Spawn replacements when below quota, subject to the rate limit
+    -- Spawn ONE replacement per tick (staggered to avoid frame-rate spikes).
+    -- The timer gate ensures a minimum gap between consecutive spawns.
     mission.recycleTimer = (mission.recycleTimer or 0) + dt
     if aliveCount < POLICE_COUNT and mission.recycleTimer >= ENDURE_RECYCLE_DELAY then
         mission.recycleTimer = 0
-        local needed     = POLICE_COUNT - aliveCount
-        local newSpawned = 0
-        for i = 1, needed do
-            local pVeh = spawnPoliceVehicle(playerPos, playerID)
-            if pVeh then
-                mission.policeSpawned = (mission.policeSpawned or 0) + 1
-                table.insert(spawnedVehicles, { id = pVeh:getID(), role = "police" })
-                newSpawned = newSpawned + 1
-            end
-        end
-        if newSpawned > 0 then
+        local pVeh = spawnPoliceVehicle(playerPos, playerID)
+        if pVeh then
+            mission.policeSpawned = (mission.policeSpawned or 0) + 1
+            table.insert(spawnedVehicles, { id = pVeh:getID(), role = "police" })
             be:enterVehicle(0, playerVeh)  -- reassert camera on the player vehicle
-            notify("warning", "Reinforcements!",
-                string.format("%d more unit%s dispatched!", newSpawned, newSpawned > 1 and "s" or ""))
+            notify("warning", "Reinforcements!", "Another unit dispatched!")
         end
     end
 end
