@@ -765,8 +765,10 @@ local function tickTeleportPolice(playerPos, dt)
                     playerPos.z
                 )
                 v:setPosition(newPos)
-                v:resetBroken()  -- fully repairs vehicle deformation and damage (GE-side reset)
+                -- resetBrokenFlexMesh repairs deformation/damage from the VE side;
+                -- resetBroken() does not exist on the GE-side BeamNGVehicle object.
                 v:queueLuaCommand(
+                    "obj:resetBrokenFlexMesh(); " ..
                     "ai.setMode('chase'); ai.setTargetObjectID(" .. tostring(playerID) .. ")"
                 )
             end
