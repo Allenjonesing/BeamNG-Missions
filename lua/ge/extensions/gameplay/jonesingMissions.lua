@@ -10,8 +10,11 @@
 --   CHASE  – a target vehicle spawns and flees; player must catch and destroy it.
 --   ESCAPE – police spawn; player must outrun them all within the time limit.
 --   FOLLOW – player must tail a moving target, stay close without damaging it.
---   ENDURE – police recycle endlessly; survive the full time limit.
+--   ENDURE – police recycle endlessly; survive the full time limit without being wrecked.
 --   REACH  – escape recycling police and drive to a destination column of light.
+--
+-- Mission markers are placed on valid roadways using the map navigation graph so
+-- they are always accessible by vehicle.  Positions are randomised each session.
 --
 -- An ImGui HUD panel (top-left) shows every mission with a compass direction and
 -- distance so the player can navigate to them from anywhere on the map.
@@ -25,78 +28,103 @@ local FOLLOW = "follow"
 local ENDURE = "endure"
 local REACH  = "reach"
 
--- ── Mission points ─────────────────────────────────────────────────────────────
--- Coordinates target the West Coast USA map.  Adjust pos/z to place markers at
--- interesting spots on whichever map you are playing.
--- color = { r, g, b, a } drawn in idle state.
-local missionPoints = {
-    -- ── Existing missions ─────────────────────────────────────────────────────
+-- ── Mission templates ──────────────────────────────────────────────────────────
+-- Positions are assigned at runtime from the map navigation graph.  The fallback
+-- coordinates target West Coast USA.
+local missionTemplates = {
     {
-        name          = "Downtown Chase",
+        name          = "Smash and Grab",
         type          = CHASE,
-        pos           = vec3(  100,  200, 25),
         triggerRadius = 12,
         color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.70 },
+        fallbackPos   = vec3(  100,  200, 25),
     },
     {
-        name          = "Police Gauntlet",
+        name          = "Heat Wave",
         type          = ESCAPE,
-        pos           = vec3( -300,  100, 20),
         triggerRadius = 12,
         color         = { r = 0.10, g = 0.40, b = 1.0, a = 0.70 },
+        fallbackPos   = vec3( -300,  100, 20),
     },
     {
-        name          = "Highway Pursuit",
+        name          = "Interstate Takedown",
         type          = CHASE,
-        pos           = vec3(  500, -200, 30),
         triggerRadius = 12,
         color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.70 },
+        fallbackPos   = vec3(  500, -200, 30),
     },
     {
-        name          = "Police Ambush",
+        name          = "Ambush Alley",
         type          = ESCAPE,
-        pos           = vec3( -100,  500, 22),
         triggerRadius = 12,
         color         = { r = 0.10, g = 0.40, b = 1.0, a = 0.70 },
+        fallbackPos   = vec3( -100,  500, 22),
     },
     {
-        name          = "Industrial Pursuit",
+        name          = "Marked for Destruction",
         type          = CHASE,
-        pos           = vec3(  300,  350, 28),
         triggerRadius = 12,
         color         = { r = 1.0, g = 0.30, b = 0.10, a = 0.70 },
+        fallbackPos   = vec3(  300,  350, 28),
     },
-    -- ── New missions ──────────────────────────────────────────────────────────
     {
-        -- FOLLOW: stay 15–60 m behind the yellow car for 60 s without hitting it
-        name          = "Surveillance",
+        name          = "Phantom Tail",
         type          = FOLLOW,
-        pos           = vec3(  200, -100, 25),
         triggerRadius = 12,
         color         = { r = 0.10, g = 0.85, b = 0.60, a = 0.70 },
+        fallbackPos   = vec3(  200, -100, 25),
     },
     {
-        -- ENDURE: recycling police never stop coming — survive 60 s
-        name          = "Gauntlet Run",
+        name          = "Endless Pursuit",
         type          = ENDURE,
-        pos           = vec3( -200,  350, 22),
         triggerRadius = 12,
         color         = { r = 0.70, g = 0.10, b = 0.90, a = 0.70 },
+        fallbackPos   = vec3( -200,  350, 22),
     },
     {
-        -- REACH: escape recycling police and reach the white destination beacon
-        name          = "Breakout",
+        name          = "Extraction Point",
         type          = REACH,
-        pos           = vec3(  400,  100, 28),
-        destPos       = vec3( -400, -300, 25),
         triggerRadius = 12,
         color         = { r = 0.85, g = 0.90, b = 1.00, a = 0.70 },
+        needsDest     = true,
+        fallbackPos   = vec3(  400,  100, 28),
+        fallbackDest  = vec3( -400, -300, 25),
+    },
+    {
+        name          = "Ghost Recon",
+        type          = FOLLOW,
+        triggerRadius = 12,
+        color         = { r = 0.10, g = 0.85, b = 0.60, a = 0.70 },
+        fallbackPos   = vec3( -350, -150, 24),
+    },
+    {
+        name          = "Iron Will",
+        type          = ENDURE,
+        triggerRadius = 12,
+        color         = { r = 0.70, g = 0.10, b = 0.90, a = 0.70 },
+        fallbackPos   = vec3(  150,  450, 26),
+    },
+    {
+        name          = "Midnight Run",
+        type          = REACH,
+        triggerRadius = 12,
+        color         = { r = 0.85, g = 0.90, b = 1.00, a = 0.70 },
+        needsDest     = true,
+        fallbackPos   = vec3( -250, -400, 20),
+        fallbackDest  = vec3(  350,  250, 30),
+    },
+    {
+        name          = "Blitz Escape",
+        type          = ESCAPE,
+        triggerRadius = 12,
+        color         = { r = 0.10, g = 0.40, b = 1.0, a = 0.70 },
+        fallbackPos   = vec3(  450, -350, 27),
     },
 }
 
 -- ── Tuning constants ───────────────────────────────────────────────────────────
 local PULSE_SPEED           = 1.5    -- marker pulse rate (radians / second)
-local ESCAPE_TIME_LIMIT     = 120    -- seconds before ESCAPE mission fails
+local ESCAPE_TIME_LIMIT     = 180    -- seconds before ESCAPE mission fails
 local MISSION_COOLDOWN      = 10     -- seconds before the same marker can re-trigger
 local ESCAPE_MIN_DISTANCE   = 250    -- metres: all police beyond this = escaped (ESCAPE win)
 local CHASE_DAMAGE_THRESH   = 0.75   -- damage fraction that counts as "destroyed"
@@ -110,33 +138,41 @@ local POLICE_COUNT          = 3      -- kept small for performance
 local FOLLOW_MIN_DIST       = 15     -- metres: too close = out-of-range
 local FOLLOW_MAX_DIST       = 60     -- metres: too far  = out-of-range
 local FOLLOW_GRACE          = 3.0    -- seconds the player can be out-of-range before failing
-local FOLLOW_DURATION       = 60     -- seconds of sustained in-range following = success
+local FOLLOW_DURATION       = 90     -- seconds of sustained in-range following = success
 local FOLLOW_DAMAGE_THRESH  = 0.30   -- damage to followed vehicle that triggers failure
 local FOLLOW_DMG_INTERVAL   = 1.0    -- seconds between VE-side damage re-checks
 
 -- ENDURE mission tuning
-local ENDURE_TIME_LIMIT        = 60     -- seconds to survive recycling police = success
+local ENDURE_TIME_LIMIT        = 90     -- seconds to survive recycling police = success
 local ENDURE_RECYCLE_DIST      = 300    -- police beyond this from the player are teleported back
 local POLICE_TELEPORT_RADIUS   = { min = 150, max = 250 }  -- far-ahead recycle teleport range (m)
 local POLICE_TELEPORT_INTERVAL = 2.0    -- seconds between recycle-teleport checks
 
 -- REACH mission tuning
-local REACH_TIME_LIMIT      = 120    -- seconds to reach destination before failing
+local REACH_TIME_LIMIT      = 180    -- seconds to reach destination before failing
 local REACH_RADIUS          = 20     -- metres: arriving within this of destPos = success
+
+-- Player damage tracking (ESCAPE / ENDURE / REACH fail condition)
+local PLAYER_DAMAGE_THRESH      = 0.80   -- player vehicle wrecked at this damage level
+local PLAYER_DMG_CHECK_INTERVAL = 1.0    -- seconds between VE-side player damage checks
 
 -- Beacon visual constants — dense pillar so spheres overlap and form a solid column
 local BEACON_BELOW        = 40     -- metres below marker Z — pierces shallow terrain
-local BEACON_ABOVE        = 80     -- metres above marker Z — visible from ~500 m
-local BEACON_STEPS        = 40     -- sphere slices; spacing ~3 m, radius 2.5 m → solid overlap
+local BEACON_ABOVE        = 200    -- metres above marker Z — visible from far away
+local BEACON_STEPS        = 100    -- sphere slices; denser steps for the taller pillar
 local BEACON_PILLAR_R     = 2.5    -- radius of pillar spheres (m)
 local BEACON_RING_SEGS    = 12     -- segments in the ground-level trigger ring
 
 -- Destination beacon (REACH mission) — brighter and distinct from mission markers (larger radius)
 local DEST_BEACON_BELOW   = 40
-local DEST_BEACON_ABOVE   = 80
-local DEST_BEACON_STEPS   = 40
+local DEST_BEACON_ABOVE   = 200
+local DEST_BEACON_STEPS   = 100
 local DEST_BEACON_R       = 3.0   -- larger than BEACON_PILLAR_R so it stands out
 local DEST_BEACON_RING    = 12
+
+-- Road placement tuning
+local MIN_MISSION_SPACING  = 200    -- metres between mission markers
+local INIT_TIMEOUT         = 5.0    -- seconds to wait for map data before using fallback positions
 
 -- HUD constants
 local HUD_WINDOW_WIDTH    = 275
@@ -148,11 +184,137 @@ local mission           = nil   -- active mission table, or nil when idle
 local spawnedVehicles   = {}    -- { id = <vehicleID>, role = "target"|"police" }
 local missionCooldowns  = {}    -- mp.name -> seconds remaining on cooldown
 local destroyedTargets  = {}    -- [vehicleID] = true when VE reports damage >= threshold
+local playerWrecked     = false -- set by VE callback when player damage >= threshold
+local missionPoints     = {}    -- populated at init from templates + road positions
+local initialized       = false -- true once mission positions have been assigned
+local initTimer         = 0     -- seconds spent waiting for map data
 
--- Pre-compute per-marker values that are constant between frames
-for _, mp in ipairs(missionPoints) do
-    mp.triggerRadiusSq        = mp.triggerRadius * mp.triggerRadius
-    missionCooldowns[mp.name] = 0
+-- ── Road position finding ──────────────────────────────────────────────────────
+-- Collects positions from the map navigation graph (road network) and returns
+-- `count` positions that are at least `minSpacing` metres apart.  Returns nil if
+-- the map graph is unavailable or has too few nodes.
+local function findRandomRoadPositions(count, minSpacing)
+    if not map or not map.getGraphpath then return nil end
+
+    local ok, gp = pcall(map.getGraphpath)
+    if not ok or not gp then return nil end
+
+    -- Collect all road node positions from the graph
+    local allPositions = {}
+
+    -- Try the positions table first (common in recent BeamNG versions)
+    if type(gp.positions) == "table" then
+        for _, pos in pairs(gp.positions) do
+            if pos and type(pos.x) == "number" then
+                table.insert(allPositions, vec3(pos.x, pos.y, pos.z))
+            end
+        end
+    end
+
+    -- Fallback: read positions from graph node data
+    if #allPositions == 0 and type(gp.graph) == "table" then
+        for _, nodeData in pairs(gp.graph) do
+            if type(nodeData) == "table" and nodeData.pos then
+                local p = nodeData.pos
+                if type(p.x) == "number" then
+                    table.insert(allPositions, vec3(p.x, p.y, p.z))
+                end
+            end
+        end
+    end
+
+    if #allPositions < count then return nil end
+
+    -- Fisher-Yates shuffle for random selection
+    for i = #allPositions, 2, -1 do
+        local j = math.random(1, i)
+        allPositions[i], allPositions[j] = allPositions[j], allPositions[i]
+    end
+
+    -- Pick positions that are at least minSpacing apart
+    local chosen = {}
+    for _, pos in ipairs(allPositions) do
+        local tooClose = false
+        for _, c in ipairs(chosen) do
+            if pos:distance(c) < minSpacing then
+                tooClose = true
+                break
+            end
+        end
+        if not tooClose then
+            table.insert(chosen, pos)
+            if #chosen >= count then break end
+        end
+    end
+
+    return #chosen >= count and chosen or nil
+end
+
+-- Counts how many positions are needed (one per mission plus one extra per REACH for destPos).
+local function countNeededPositions()
+    local n = 0
+    for _, tpl in ipairs(missionTemplates) do
+        n = n + 1
+        if tpl.needsDest then n = n + 1 end
+    end
+    return n
+end
+
+-- Builds the missionPoints table from templates using the given list of road positions.
+local function buildMissionPointsFromPositions(positions)
+    missionPoints = {}
+    local idx = 1
+    for _, tpl in ipairs(missionTemplates) do
+        local mp = {
+            name          = tpl.name,
+            type          = tpl.type,
+            triggerRadius = tpl.triggerRadius,
+            color         = tpl.color,
+            pos           = positions[idx],
+        }
+        idx = idx + 1
+        if tpl.needsDest then
+            mp.destPos = positions[idx]
+            idx = idx + 1
+        end
+        mp.triggerRadiusSq        = mp.triggerRadius * mp.triggerRadius
+        missionCooldowns[mp.name] = 0
+        table.insert(missionPoints, mp)
+    end
+end
+
+-- Builds the missionPoints table using hardcoded fallback coordinates.
+local function buildMissionPointsFallback()
+    missionPoints = {}
+    for _, tpl in ipairs(missionTemplates) do
+        local mp = {
+            name          = tpl.name,
+            type          = tpl.type,
+            triggerRadius = tpl.triggerRadius,
+            color         = tpl.color,
+            pos           = tpl.fallbackPos,
+        }
+        if tpl.needsDest then
+            mp.destPos = tpl.fallbackDest
+        end
+        mp.triggerRadiusSq        = mp.triggerRadius * mp.triggerRadius
+        missionCooldowns[mp.name] = 0
+        table.insert(missionPoints, mp)
+    end
+end
+
+-- Attempts to place missions on valid road positions.  Returns true on success.
+local function tryInitMissions()
+    local needed    = countNeededPositions()
+    local positions = findRandomRoadPositions(needed, MIN_MISSION_SPACING)
+
+    if positions then
+        buildMissionPointsFromPositions(positions)
+        log("I", "jonesingMissions",
+            "Placed " .. #missionPoints .. " missions on road positions from the navigation graph.")
+        return true
+    end
+    return false
 end
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────
@@ -192,6 +354,18 @@ local function makeFollowDamageCheckCmd(threshold, vehicleId)
             obj:sendGameEngineLua('extensions.gameplay_jonesingMissions.reportFollowTargetDamaged(%d)')
         end
     ]], threshold, vehicleId)
+end
+
+-- VE-side command that checks the *player* vehicle's damage and fires
+-- reportPlayerWrecked when the threshold is exceeded (ESCAPE/ENDURE/REACH).
+local function makePlayerDamageCheckCmd(threshold)
+    return string.format([[
+        local ok, d = pcall(function() return obj:getDamage() end)
+        if not ok then d = type(obj.damage) == 'number' and obj.damage or 0 end
+        if d >= %f then
+            obj:sendGameEngineLua('extensions.gameplay_jonesingMissions.reportPlayerWrecked()')
+        end
+    ]], threshold)
 end
 
 -- Returns an 8-point compass abbreviation for a world-space (dx, dy) vector.
@@ -314,7 +488,10 @@ local function startChase(point, playerPos)
         be:enterVehicle(0, playerVeh)
         notify("info",
             "MISSION: " .. point.name,
-            string.format("%s is fleeing — destroy it before it gets %d m away!", CHASE_TARGET_MODEL, CHASE_ESCAPE_DISTANCE))
+            string.format(
+                "A suspect vehicle is fleeing! Chase it down and wreck it before it escapes beyond %d m. "
+                .. "Ram it, pit manoeuvre it — do whatever it takes to stop it!",
+                CHASE_ESCAPE_DISTANCE))
     else
         notify("error", "Spawn Failed", "Could not spawn chase target — mission aborted.")
         cleanupMission(false, "Target failed to spawn.")
@@ -344,7 +521,12 @@ local function startEscape(point, playerPos)
     end
     notify("warning",
         "MISSION: " .. point.name,
-        string.format("WANTED!  %d police unit%s pursuing you!  Escape them all!", spawned, spawned ~= 1 and "s" or ""))
+        string.format(
+            "You've been spotted! %d police unit%s in hot pursuit! "
+            .. "Put %d m between you and every officer to shake them. "
+            .. "You have %d seconds — and if they wreck your vehicle, it's over!",
+            spawned, spawned ~= 1 and "s are" or " is",
+            ESCAPE_MIN_DISTANCE, ESCAPE_TIME_LIMIT))
 end
 
 local function startFollow(point, playerPos)
@@ -375,7 +557,10 @@ local function startFollow(point, playerPos)
         be:enterVehicle(0, playerVeh)
         notify("info",
             "MISSION: " .. point.name,
-            string.format("Follow the yellow car!  Stay %d–%d m away for %d s without hitting it.",
+            string.format(
+                "An undercover target is on the move! Tail the yellow vehicle and stay between "
+                .. "%d m and %d m for %d seconds. Don't get too close or you'll blow your cover "
+                .. "— and don't collide with them or the operation is compromised!",
                 FOLLOW_MIN_DIST, FOLLOW_MAX_DIST, FOLLOW_DURATION))
     else
         notify("error", "Spawn Failed", "Could not spawn follow target — mission aborted.")
@@ -407,7 +592,11 @@ local function startEndure(point, playerPos)
     mission.recycleTimer = 0
     notify("warning",
         "MISSION: " .. point.name,
-        string.format("ENDURE!  Police never stop coming.  Survive %d seconds!", ENDURE_TIME_LIMIT))
+        string.format(
+            "You're surrounded and reinforcements are endless! Survive for %d seconds as police "
+            .. "units swarm your position. If your vehicle is wrecked, it's all over — stay mobile "
+            .. "and stay alive!",
+            ENDURE_TIME_LIMIT))
 end
 
 local function startReach(point, playerPos)
@@ -434,7 +623,11 @@ local function startReach(point, playerPos)
     mission.recycleTimer = 0
     notify("warning",
         "MISSION: " .. point.name,
-        string.format("Reach the destination!  Police recycle endlessly.  You have %d seconds.", REACH_TIME_LIMIT))
+        string.format(
+            "The extraction point is marked — get there in %d seconds! Police will pursue "
+            .. "relentlessly and won't give up. If your vehicle is destroyed before you arrive, "
+            .. "the mission fails!",
+            REACH_TIME_LIMIT))
 end
 
 -- ── Mission lifecycle ──────────────────────────────────────────────────────────
@@ -445,7 +638,8 @@ local function startMission(point)
     if not playerPos then return end
 
     spawnedVehicles = {}
-    mission = { point = point, timer = 0, policeSpawned = 0 }
+    playerWrecked   = false
+    mission = { point = point, timer = 0, policeSpawned = 0, playerDmgTimer = 0 }
 
     if     point.type == CHASE  then startChase (point, playerPos)
     elseif point.type == ESCAPE then startEscape(point, playerPos)
@@ -468,6 +662,7 @@ local function cleanupMission(success, failMsg)
     end
     spawnedVehicles  = {}
     destroyedTargets = {}
+    playerWrecked    = false
 
     if success then
         notify("success", "Mission Complete!", "Well done!  '" .. mission.point.name .. "' completed!")
@@ -776,8 +971,43 @@ local function tickTeleportPolice(playerPos, dt)
     end
 end
 
+-- Periodically queues a VE-side damage check on the player's vehicle.
+-- If playerWrecked is already set, returns true (caller should fail the mission).
+local function tickPlayerDamage(dt)
+    if playerWrecked then return true end
+
+    mission.playerDmgTimer = (mission.playerDmgTimer or 0) + dt
+    if mission.playerDmgTimer >= PLAYER_DMG_CHECK_INTERVAL then
+        mission.playerDmgTimer = 0
+        local pv = getPlayerVehicle()
+        if pv then
+            pv:queueLuaCommand(makePlayerDamageCheckCmd(PLAYER_DAMAGE_THRESH))
+        end
+    end
+
+    return false
+end
+
 -- ── Per-frame update ───────────────────────────────────────────────────────────
 local function onUpdate(dt)
+    -- ── Deferred initialisation ─────────────────────────────────────────────
+    -- Wait for the map navigation graph to become available so that mission
+    -- markers can be placed on valid roadways.  After INIT_TIMEOUT seconds,
+    -- fall back to hardcoded positions.
+    if not initialized then
+        initTimer = initTimer + dt
+        if tryInitMissions() then
+            initialized = true
+        elseif initTimer >= INIT_TIMEOUT then
+            buildMissionPointsFallback()
+            initialized = true
+            log("I", "jonesingMissions",
+                "Map graph not available — using fallback mission positions.")
+        else
+            return  -- skip rendering until positions are ready
+        end
+    end
+
     pulseTime = pulseTime + dt * PULSE_SPEED
 
     -- Resolve player position once per frame.  May be nil (spectator mode, etc.).
@@ -896,6 +1126,11 @@ local function onUpdate(dt)
             end
 
         elseif mtype == ESCAPE then
+            -- Player vehicle wrecked → mission fail
+            if tickPlayerDamage(dt) then
+                cleanupMission(false, "Your vehicle was wrecked by the police!")
+                return
+            end
             if mission.timer >= ESCAPE_TIME_LIMIT then
                 cleanupMission(false, "Time's up — you didn't shake them!")
                 return
@@ -914,12 +1149,22 @@ local function onUpdate(dt)
             end
 
         elseif mtype == ENDURE then
+            -- Player vehicle wrecked → mission fail
+            if tickPlayerDamage(dt) then
+                cleanupMission(false, "Your vehicle was wrecked — you didn't survive!")
+                return
+            end
             tickTeleportPolice(playerPos, dt)
             if mission and mission.timer >= ENDURE_TIME_LIMIT then
                 cleanupMission(true)
             end
 
         elseif mtype == REACH then
+            -- Player vehicle wrecked → mission fail
+            if tickPlayerDamage(dt) then
+                cleanupMission(false, "Your vehicle was destroyed before reaching the destination!")
+                return
+            end
             tickTeleportPolice(playerPos, dt)
             -- tickTeleportPolice does not call cleanupMission; mission is always valid here
             if mission.timer >= REACH_TIME_LIMIT then
@@ -944,7 +1189,7 @@ end
 -- ── Extension hooks ────────────────────────────────────────────────────────────
 local function onExtensionLoaded()
     log("I", "jonesingMissions",
-        "Jonesing GTA-like Mission System loaded — " .. #missionPoints .. " mission points active.")
+        "Jonesing GTA-like Mission System loaded — " .. #missionTemplates .. " mission templates registered.")
 end
 
 local function onExtensionUnloaded()
@@ -964,6 +1209,12 @@ end
 -- Called from VE-side when a FOLLOW target exceeds the damage threshold.
 function M.reportFollowTargetDamaged(vid)
     destroyedTargets[vid] = true
+end
+
+-- Called from VE-side when the player's vehicle exceeds the damage threshold
+-- during ESCAPE, ENDURE, or REACH missions.
+function M.reportPlayerWrecked()
+    playerWrecked = true
 end
 
 return M
