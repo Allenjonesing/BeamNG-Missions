@@ -490,7 +490,7 @@ local function startChase(point, playerPos)
             "MISSION: " .. point.name,
             string.format(
                 "A suspect vehicle is fleeing! Chase it down and wreck it before it escapes beyond %d m. "
-                .. "Ram it, pit manoeuvre it — do whatever it takes to stop it!",
+                .. "Ram it, block it — do whatever it takes to stop it!",
                 CHASE_ESCAPE_DISTANCE))
     else
         notify("error", "Spawn Failed", "Could not spawn chase target — mission aborted.")
@@ -1004,7 +1004,7 @@ local function onUpdate(dt)
             log("I", "jonesingMissions",
                 "Map graph not available — using fallback mission positions.")
         else
-            return  -- skip rendering until positions are ready
+            return  -- defer all mission updates until positions are ready
         end
     end
 
