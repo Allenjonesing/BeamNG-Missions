@@ -115,9 +115,10 @@ local FOLLOW_DAMAGE_THRESH  = 0.30   -- damage to followed vehicle that triggers
 local FOLLOW_DMG_INTERVAL   = 1.0    -- seconds between VE-side damage re-checks
 
 -- ENDURE mission tuning
-local ENDURE_TIME_LIMIT     = 60     -- seconds to survive recycling police = success
-local ENDURE_RECYCLE_DIST   = 300    -- police beyond this from the player are replaced
-local ENDURE_RECYCLE_DELAY  = 5.0    -- minimum seconds between recycling spawns
+local ENDURE_TIME_LIMIT        = 60     -- seconds to survive recycling police = success
+local ENDURE_RECYCLE_DIST      = 300    -- police beyond this from the player are teleported back
+local POLICE_TELEPORT_RADIUS   = { min = 150, max = 250 }  -- far-ahead recycle teleport range (m)
+local POLICE_TELEPORT_INTERVAL = 2.0    -- seconds between recycle-teleport checks
 
 -- REACH mission tuning
 local REACH_TIME_LIMIT      = 120    -- seconds to reach destination before failing
@@ -736,51 +737,41 @@ local function tickFollow(playerPos, dt)
     return nil
 end
 
--- Removes police that are too far or gone from spawnedVehicles, then spawns
--- replacements (rate-limited) to keep the pressure on.
--- Used by both ENDURE and REACH missions.
-local function tickRecyclePolice(playerPos, dt)
+-- For ENDURE and REACH missions: police that drift beyond ENDURE_RECYCLE_DIST are
+-- repaired and teleported far ahead of the player.  All police are spawned once at
+-- mission start and recycled in-place thereafter — no new vehicles are ever created.
+local function tickTeleportPolice(playerPos, dt)
     if not playerPos then return end
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
     local playerID = playerVeh:getID()
     if not playerID then return end
 
-    -- Cull police that are too far away or no longer in the scene
-    local survivors = {}
-    for _, vd in ipairs(spawnedVehicles) do
-        if vd.role ~= "police" then
-            table.insert(survivors, vd)
-        else
-            local v = be:getObjectByID(vd.id)
-            if v and playerPos:distance(v:getPosition()) < ENDURE_RECYCLE_DIST then
-                table.insert(survivors, vd)
-            else
-                -- Delete the vehicle object so it doesn't linger
-                local obj = scenetree.findObjectById(vd.id)
-                if obj then obj:delete() end
-            end
-        end
-    end
-    spawnedVehicles = survivors
-
-    -- Count alive police in the current list
-    local aliveCount = 0
-    for _, vd in ipairs(spawnedVehicles) do
-        if vd.role == "police" then aliveCount = aliveCount + 1 end
-    end
-
-    -- Spawn ONE replacement per tick (staggered to avoid frame-rate spikes).
-    -- The timer gate ensures a minimum gap between consecutive spawns.
+    -- Rate-limit checks to avoid teleporting every single frame
     mission.recycleTimer = (mission.recycleTimer or 0) + dt
-    if aliveCount < POLICE_COUNT and mission.recycleTimer >= ENDURE_RECYCLE_DELAY then
-        mission.recycleTimer = 0
-        local pVeh = spawnPoliceVehicle(playerPos, playerID)
-        if pVeh then
-            mission.policeSpawned = (mission.policeSpawned or 0) + 1
-            table.insert(spawnedVehicles, { id = pVeh:getID(), role = "police" })
-            be:enterVehicle(0, playerVeh)  -- reassert camera on the player vehicle
-            notify("warning", "Reinforcements!", "Another unit dispatched!")
+    if mission.recycleTimer < POLICE_TELEPORT_INTERVAL then return end
+    mission.recycleTimer = 0
+
+    for _, vd in ipairs(spawnedVehicles) do
+        if vd.role == "police" then
+            local v = be:getObjectByID(vd.id)
+            if v and playerPos:distance(v:getPosition()) > ENDURE_RECYCLE_DIST then
+                -- Repair and teleport far ahead of the player so it is waiting
+                local angle  = math.random() * 2 * math.pi
+                local d      = math.random(POLICE_TELEPORT_RADIUS.min, POLICE_TELEPORT_RADIUS.max)
+                local newPos = vec3(
+                    playerPos.x + math.cos(angle) * d,
+                    playerPos.y + math.sin(angle) * d,
+                    playerPos.z
+                )
+                v:setPosition(newPos)
+                -- resetBrokenFlexMesh repairs deformation/damage from the VE side;
+                -- resetBroken() does not exist on the GE-side BeamNGVehicle object.
+                v:queueLuaCommand(
+                    "obj:resetBrokenFlexMesh(); " ..
+                    "ai.setMode('chase'); ai.setTargetObjectID(" .. tostring(playerID) .. ")"
+                )
+            end
         end
     end
 end
@@ -923,14 +914,14 @@ local function onUpdate(dt)
             end
 
         elseif mtype == ENDURE then
-            tickRecyclePolice(playerPos, dt)
+            tickTeleportPolice(playerPos, dt)
             if mission and mission.timer >= ENDURE_TIME_LIMIT then
                 cleanupMission(true)
             end
 
         elseif mtype == REACH then
-            tickRecyclePolice(playerPos, dt)
-            -- tickRecyclePolice does not call cleanupMission; mission is always valid here
+            tickTeleportPolice(playerPos, dt)
+            -- tickTeleportPolice does not call cleanupMission; mission is always valid here
             if mission.timer >= REACH_TIME_LIMIT then
                 cleanupMission(false, "Time's up — didn't reach the destination!")
                 return
