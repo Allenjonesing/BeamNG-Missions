@@ -30,7 +30,7 @@ A mod for [BeamNG.drive](https://www.beamng.com/) that adds GTA-style missions t
    ```
    For example:
    ```
-   C:\Users\Allen\AppData\Local\BeamNG\BeamNG.drive\current\mods\unpacked\BeamNG-Missions-v0.2
+   C:\Users\YourUsername\AppData\Local\BeamNG\BeamNG.drive\current\mods\unpacked\BeamNG-Missions-v0.2
    ```
 3. Launch BeamNG.drive and load the **West Coast USA** map.
 4. The mission markers will appear automatically — look for the glowing columns of light and check the HUD panel in the top-left corner for directions to each mission.
