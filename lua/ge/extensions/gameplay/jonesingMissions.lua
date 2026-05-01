@@ -206,24 +206,39 @@ end
 
 -- Spawns one police/pursuer at a random position around playerPos and sets its AI.
 -- Returns the spawned vehicle object, or nil on failure.
+
 local function spawnPoliceVehicle(playerPos, playerID)
-    local angle    = math.random() * 2 * math.pi
-    local dist     = math.random(POLICE_SPAWN_RADIUS.min, POLICE_SPAWN_RADIUS.max)
+    local angle = math.random() * 2 * math.pi
+    local dist = math.random(POLICE_SPAWN_RADIUS.min, POLICE_SPAWN_RADIUS.max)
+
     local spawnPos = vec3(
         playerPos.x + math.cos(angle) * dist,
         playerPos.y + math.sin(angle) * dist,
         playerPos.z
     )
-    local veh = core_vehicles.spawnNewVehicle("etk800", {
-        pos   = spawnPos,
-        rot   = quat(0, 0, 0, 1),
-        color = "0.85 0.85 0.85 1",
+
+    local choice = POLICE_VARIANTS[math.random(1, #POLICE_VARIANTS)]
+
+    local veh = core_vehicles.spawnNewVehicle(choice.model, {
+        pos    = spawnPos,
+        rot    = quat(0, 0, 0, 1),
+        config = choice.config,
     })
+
     if veh then
         veh:queueLuaCommand(
             "ai.setMode('chase'); ai.setTargetObjectID(" .. tostring(playerID) .. ")"
         )
+
+        log("I", "jonesingMissions",
+            "Spawned police vehicle: " .. tostring(choice.model) ..
+            " config=" .. tostring(choice.config))
+    else
+        log("E", "jonesingMissions",
+            "Failed to spawn police vehicle: " .. tostring(choice.model) ..
+            " config=" .. tostring(choice.config))
     end
+
     return veh
 end
 
