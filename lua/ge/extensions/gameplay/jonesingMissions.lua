@@ -20,7 +20,7 @@
 -- bottom-center objective banner, custom loader overlay, target arrows, pause-hidden UI, camera-relative radar, roads overlay,
 -- pause-safe mission timers, and one-unlocked-mission-per-type tier progression.
 
-M = {}
+local M = {}
 
 -- BeamNG ImGui is usually exposed as ui_imgui in extensions.
 -- Keep the old global fallback so the file remains version-tolerant.
@@ -28,13 +28,13 @@ local im = rawget(_G, "ui_imgui") or rawget(_G, "im")
 
 
 -- ── Mission types ──────────────────────────────────────────────────────────────
-CHASE = "chase"
-ESCAPE = "escape"
-FOLLOW = "follow"
-ENDURE = "endure"
-REACH = "reach"
-RALLY = "rally"
-CRUISE = "cruise"
+local CHASE  = "chase"
+local ESCAPE = "escape"
+local FOLLOW = "follow"
+local ENDURE = "endure"
+local REACH  = "reach"
+local RALLY  = "rally"
+local CRUISE = "cruise"
 
 -- ── Mission templates ──────────────────────────────────────────────────────────
 -- Positions are assigned at runtime from the map navigation graph.  The fallback
@@ -150,27 +150,26 @@ local missionTemplates = {
 }
 
 -- ── Tuning constants ───────────────────────────────────────────────────────────
-PULSE_SPEED = 1.5    -- marker pulse rate (radians / second)
-ESCAPE_TIME_LIMIT = 60    -- seconds before ESCAPE mission fails
-MISSION_COOLDOWN = 10     -- seconds before the same marker can re-trigger
-ESCAPE_MIN_DISTANCE = 500    -- metres: all police beyond this = escaped (ESCAPE win)
-CHASE_DAMAGE_THRESH = 0.50   -- damage fraction that counts as "destroyed"
-CHASE_ESCAPE_DISTANCE = 450    -- metres: target beyond this = got away (CHASE fail); higher to prevent instant fails after farther spawns
-CHASE_SPAWN_OFFSET = 110    -- metres ahead of player to spawn the target
-CHASE_TARGET_MODEL = "etk800"
-CHASE_STOPPED_SPEED = 5.0    -- m/s: below this the target is considered stopped
-CHASE_STOPPED_TIME = 8.0    -- seconds: target stopped this long = destroyed / immobilized
-CHASE_SPEED_INTERVAL = 0.5    -- seconds between speed checks
-CHASE_START_GRACE = 15.0   -- seconds: no chase pass/fail until target AI has time to start fleeing
-POLICE_SPAWN_RADIUS = { min = 40, max = 60 }
-POLICE_COUNT = 4      -- 4 feels more GTA-like without murdering performance
-POLICE_SPAWN_ATTEMPTS = 5      -- fewer attempts; bad .pc paths get expensive during mission start
+local PULSE_SPEED           = 1.5    -- marker pulse rate (radians / second)
+local ESCAPE_TIME_LIMIT     = 60    -- seconds before ESCAPE mission fails
+local MISSION_COOLDOWN      = 10     -- seconds before the same marker can re-trigger
+local ESCAPE_MIN_DISTANCE   = 500    -- metres: all police beyond this = escaped (ESCAPE win)
+local CHASE_DAMAGE_THRESH   = 0.50   -- damage fraction that counts as "destroyed"
+local CHASE_ESCAPE_DISTANCE = 200    -- metres: target beyond this = got away (CHASE fail)
+local CHASE_SPAWN_OFFSET    = 10     -- metres ahead of player to spawn the target
+local CHASE_TARGET_MODEL    = "etk800"
+local CHASE_STOPPED_SPEED   = 5.0    -- m/s: below this the target is considered stopped
+local CHASE_STOPPED_TIME    = 5.0    -- seconds: target stopped this long = destroyed / immobilized
+local CHASE_SPEED_INTERVAL  = 0.5    -- seconds between speed checks
+local POLICE_SPAWN_RADIUS   = { min = 40, max = 60 }
+local POLICE_COUNT          = 4      -- 4 feels more GTA-like without murdering performance
+local POLICE_SPAWN_ATTEMPTS = 5      -- fewer attempts; bad .pc paths get expensive during mission start
 
 -- Vehicle config notes:
 -- * model = the vehicle folder name.
 -- * config = path to a .pc file. This must actually exist in your BeamNG install/mods.
 -- * If one of these paths is wrong, the spawn attempt may fail or appear as a plain/default car.
-POLICE_VARIANTS = {
+local POLICE_VARIANTS = {
     { model = "fullsize", config = "vehicles/fullsize/police.pc",             label = "Grand Marshal Police" },
     { model = "roamer",   config = "vehicles/roamer/police.pc",               label = "Roamer Police SUV" },
     { model = "sunburst2", config = "vehicles/sunburst2/police.pc",           label = "Sunburst Police" },
@@ -181,82 +180,79 @@ POLICE_VARIANTS = {
     { model = "etk800",   config = "vehicles/etk800/854_police_A_alt.pc",      label = "ETK 854 Police Alt" },
 }
 -- FOLLOW mission tuning
-FOLLOW_SPAWN_DIST = 5      -- metres: target spawns right next to player for identification
-FOLLOW_MIN_DIST = 20     -- metres: too close = out-of-range
-FOLLOW_MAX_DIST = 150    -- metres: too far  = out-of-range
-FOLLOW_GRACE = 10.0   -- seconds the player can be out-of-range before failing
-FOLLOW_IMMUNITY = 20.0   -- seconds at mission start before "too close" detection activates
-FOLLOW_DURATION = 90     -- seconds of sustained in-range following = success
-FOLLOW_DAMAGE_THRESH = 0.10   -- damage to followed vehicle that triggers failure
-FOLLOW_DMG_INTERVAL = 1.0    -- seconds between VE-side damage re-checks
+local FOLLOW_SPAWN_DIST     = 5      -- metres: target spawns right next to player for identification
+local FOLLOW_MIN_DIST       = 20     -- metres: too close = out-of-range
+local FOLLOW_MAX_DIST       = 150    -- metres: too far  = out-of-range
+local FOLLOW_GRACE          = 10.0   -- seconds the player can be out-of-range before failing
+local FOLLOW_IMMUNITY       = 20.0   -- seconds at mission start before "too close" detection activates
+local FOLLOW_DURATION       = 90     -- seconds of sustained in-range following = success
+local FOLLOW_DAMAGE_THRESH  = 0.10   -- damage to followed vehicle that triggers failure
+local FOLLOW_DMG_INTERVAL   = 1.0    -- seconds between VE-side damage re-checks
 
 -- ENDURE mission tuning
-ENDURE_TIME_LIMIT = 90     -- seconds to survive recycling police = success
-ENDURE_RECYCLE_DIST = 300    -- police beyond this from the player are teleported back
-POLICE_TELEPORT_RADIUS = { min = 520, max = 780 }   -- far-ahead recycle placement; grace prevents instant re-recycle
-POLICE_TELEPORT_INTERVAL = 2.5    -- seconds between recycle-teleport checks
+local ENDURE_TIME_LIMIT        = 90     -- seconds to survive recycling police = success
+local ENDURE_RECYCLE_DIST      = 300    -- police beyond this from the player are teleported back
+local POLICE_TELEPORT_RADIUS   = { min = 520, max = 780 }   -- far-ahead recycle placement; grace prevents instant re-recycle
+local POLICE_TELEPORT_INTERVAL = 2.5    -- seconds between recycle-teleport checks
 
 -- REACH mission tuning
-REACH_TIME_LIMIT = 180    -- seconds to reach destination before failing
-REACH_RADIUS = 20     -- metres: arriving within this of destPos = success
+local REACH_TIME_LIMIT      = 180    -- seconds to reach destination before failing
+local REACH_RADIUS          = 20     -- metres: arriving within this of destPos = success
 
 -- RALLY mission tuning (multi-checkpoint point-to-point)
-RALLY_CHECKPOINT_COUNT = 5       -- total waypoints to reach
-RALLY_BASE_TIME = 60      -- seconds for the first checkpoint
-RALLY_BONUS_TIME = 30      -- seconds added per checkpoint reached
-RALLY_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
-RALLY_WAYPOINT_SPREAD = 400     -- metres: max distance between successive waypoints
+local RALLY_CHECKPOINT_COUNT  = 5       -- total waypoints to reach
+local RALLY_BASE_TIME         = 60      -- seconds for the first checkpoint
+local RALLY_BONUS_TIME        = 30      -- seconds added per checkpoint reached
+local RALLY_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
+local RALLY_WAYPOINT_SPREAD   = 400     -- metres: max distance between successive waypoints
 
 -- CRUISE mission tuning (single far destination, no police, player chooses route)
-CRUISE_TIME_LIMIT = 300     -- seconds to reach the destination
-CRUISE_RADIUS = 25      -- metres: arriving within this of destPos = success
+local CRUISE_TIME_LIMIT       = 300     -- seconds to reach the destination
+local CRUISE_RADIUS           = 25      -- metres: arriving within this of destPos = success
 
 -- Player damage tracking (ESCAPE / ENDURE / REACH fail condition)
-PLAYER_DAMAGE_THRESH = 0.70   -- player vehicle wrecked at this damage level
-PLAYER_DMG_CHECK_INTERVAL = 1.0    -- seconds between VE-side player damage checks
-DRIVER_SEAT_CHECK_INTERVAL = 0.85   -- seconds between player/body/driver-seat health probes
-WANTED_RECYCLE_INTERVAL = 2.0    -- seconds between wanted police recycle checks
-WANTED_RECYCLE_DISTANCE = 280    -- wanted police farther than this are recycled ahead
-POLICE_RECYCLE_GRACE = 10.0   -- seconds after spawn/teleport before a police unit may recycle again
-PLAYER_IMMOBILE_SPEED = 2.0    -- m/s; below this counts as immobilized/stuck
-PLAYER_IMMOBILE_TIME = 6.0    -- seconds immobilized near police before failing
-PLAYER_BUSTED_DISTANCE = 55     -- metres; closest police must be within this to bust immobilized player
+local PLAYER_DAMAGE_THRESH      = 0.70   -- player vehicle wrecked at this damage level
+local PLAYER_DMG_CHECK_INTERVAL = 1.0    -- seconds between VE-side player damage checks
+local DRIVER_SEAT_CHECK_INTERVAL = 0.85   -- seconds between player/body/driver-seat health probes
+local WANTED_RECYCLE_INTERVAL    = 2.0    -- seconds between wanted police recycle checks
+local WANTED_RECYCLE_DISTANCE    = 280    -- wanted police farther than this are recycled ahead
+local POLICE_RECYCLE_GRACE       = 10.0   -- seconds after spawn/teleport before a police unit may recycle again
+local PLAYER_IMMOBILE_SPEED      = 2.0    -- m/s; below this counts as immobilized/stuck
+local PLAYER_IMMOBILE_TIME       = 6.0    -- seconds immobilized near police before failing
+local PLAYER_BUSTED_DISTANCE     = 55     -- metres; closest police must be within this to bust immobilized player
 
 -- Beacon visual constants — dense pillar so spheres overlap and form a solid column
-BEACON_BELOW = 3      -- metres below marker Z — avoid burying pillars below road surfaces
-BEACON_ABOVE = 75    -- metres above marker Z — huge GTA-style sky pillar
-BEACON_STEPS = 16    -- fewer slices; cheaper debugDrawer pillar
-BEACON_PILLAR_R = 4.0    -- radius of pillar spheres (m)
-BEACON_RING_SEGS = 12     -- segments in the ground-level trigger ring
+local BEACON_BELOW        = 3      -- metres below marker Z — avoid burying pillars below road surfaces
+local BEACON_ABOVE        = 75    -- metres above marker Z — huge GTA-style sky pillar
+local BEACON_STEPS        = 16    -- fewer slices; cheaper debugDrawer pillar
+local BEACON_PILLAR_R     = 4.0    -- radius of pillar spheres (m)
+local BEACON_RING_SEGS    = 12     -- segments in the ground-level trigger ring
 
 -- Destination beacon (REACH mission) — brighter and distinct from mission markers (larger radius)
-DEST_BEACON_BELOW = 3
-DEST_BEACON_ABOVE = 75
-DEST_BEACON_STEPS = 16
-DEST_BEACON_R = 4.8   -- larger than BEACON_PILLAR_R so it stands out
-DEST_BEACON_RING = 12
+local DEST_BEACON_BELOW   = 3
+local DEST_BEACON_ABOVE   = 75
+local DEST_BEACON_STEPS   = 16
+local DEST_BEACON_R       = 4.8   -- larger than BEACON_PILLAR_R so it stands out
+local DEST_BEACON_RING    = 12
 
 -- Road placement tuning
-MIN_MISSION_SPACING = 200    -- metres between mission markers
-INIT_TIMEOUT = 5.0    -- seconds to wait for map data before using fallback positions
+local MIN_MISSION_SPACING  = 200    -- metres between mission markers
+local INIT_TIMEOUT         = 5.0    -- seconds to wait for map data before using fallback positions
 
 -- HUD constants
-HUD_WINDOW_WIDTH = 540
-HUD_SCALE = 1.50
-RADAR_WINDOW_SIZE = 320
-RADAR_RANGE_METERS = 500
-RADAR_ROAD_DRAW_LIMIT = 120
-DIST_KM_THRESHOLD = 1000   -- metres; above this shown in km
-PLAYER_HP_WINDOW_W = 520
-PLAYER_HP_WINDOW_H = 118
+local HUD_WINDOW_WIDTH    = 540
+local HUD_SCALE           = 1.50
+local RADAR_WINDOW_SIZE   = 320
+local RADAR_RANGE_METERS  = 500
+local RADAR_ROAD_DRAW_LIMIT = 120
+local DIST_KM_THRESHOLD   = 1000   -- metres; above this shown in km
+local PLAYER_HP_WINDOW_W  = 520
+local PLAYER_HP_WINDOW_H  = 118
 
 -- Player/body health placeholder.  This intentionally represents the player/unicycle
 -- concept, NOT the vehicle condition.  It stays at 100 for now until the body damage
 -- system is wired in.
-PLAYER_BODY_MAX_HP = 100
-
--- Persistent progress. BeamNG userpath-relative; keeps completed tiers unlocked across reloads.
-SAVE_PATH = "settings/jonesingMissions/progress.json"
+local PLAYER_BODY_MAX_HP  = 100
 
 -- ── State ──────────────────────────────────────────────────────────────────────
 local pulseTime         = 0
@@ -292,63 +288,6 @@ local playerHealthLastReason = "none"
 local playerHealthLastDamage = 0
 local playerHealthLastSpeedDrop = 0
 local getPlayerVehicle  = nil -- forward declaration used by helpers above the concrete function
-
--- ── Persistent progress helpers ────────────────────────────────────────────────
-local function tableCount(t)
-    local n = 0
-    if type(t) == "table" then
-        for _ in pairs(t) do n = n + 1 end
-    end
-    return n
-end
-
-local function saveProgress()
-    local payload = {
-        version = 1,
-        completedByType = missionCompletedByType or {},
-    }
-    local ok, err = pcall(function()
-        if jsonWriteFile then
-            jsonWriteFile(SAVE_PATH, payload, true)
-        else
-            log("W", "jonesingMissions", "jsonWriteFile unavailable; mission progress cannot be saved in this BeamNG build.")
-        end
-    end)
-    if ok then
-        log("I", "jonesingMissions", "Saved Jonesing mission progress to " .. SAVE_PATH)
-    else
-        log("W", "jonesingMissions", "Failed to save mission progress: " .. tostring(err))
-    end
-end
-
-local function loadProgress()
-    local ok, data = pcall(function()
-        if jsonReadFile then return jsonReadFile(SAVE_PATH) end
-        return nil
-    end)
-
-    if ok and type(data) == "table" and type(data.completedByType) == "table" then
-        missionCompletedByType = data.completedByType
-        log("I", "jonesingMissions", "Loaded Jonesing mission progress: " .. tostring(tableCount(missionCompletedByType)) .. " mission-type entries.")
-    else
-        missionCompletedByType = missionCompletedByType or {}
-        log("I", "jonesingMissions", "No saved Jonesing mission progress found yet.")
-    end
-
-    -- Rebuild markers after loading, because completed tiers decide which missions are visible.
-    initialized = false
-    initTimer = 0
-end
-
-local function resetProgress()
-    missionCompletedByType = {}
-    initialized = false
-    initTimer = 0
-    saveProgress()
-    if guihooks then
-        guihooks.trigger("toastrMsg", { type = "info", title = "Progress Reset", msg = "Jonesing mission progress was reset." })
-    end
-end
 
 
 -- ── Road position finding ──────────────────────────────────────────────────────
@@ -540,58 +479,6 @@ local function anchoredPos(anchor, w, h, marginX, marginY)
         return im.ImVec2(math.max(marginX, (sw - w) * 0.50), math.max(marginY, (sh - h) * 0.50))
     end
     return im.ImVec2(marginX, marginY)
-end
-
-
--- ImGui compatibility wrappers for newer BeamNG builds.
--- Newer ui_imgui versions removed several object-style overloads and expect raw arguments.
-local function uiSetNextWindowSize(w, h)
-    if im and im.SetNextWindowSize then pcall(function() im.SetNextWindowSize(w, h, im.Cond_Always) end) end
-end
-
-local function uiSetNextWindowPos(pos)
-    if im and im.SetNextWindowPos and pos then pcall(function() im.SetNextWindowPos(pos.x or 0, pos.y or 0, im.Cond_Always) end) end
-end
-
-local function uiSetCursorScreenPos(x, y)
-    if im and im.SetCursorScreenPos then pcall(function() im.SetCursorScreenPos(x, y) end) end
-end
-
-local function uiBeginWindow(name, flags)
-    if not (im and im.Begin) then return false end
-    local ok, drawn = pcall(function() return im.Begin(name, flags or 0) end)
-    if ok then return drawn ~= false end
-    -- Older fallback, only reached on older builds where the 2-arg form fails.
-    ok, drawn = pcall(function() return im.Begin(name, nil, flags or 0) end)
-    return ok and drawn ~= false
-end
-
-local function uiDrawRectFilled(drawList, x1, y1, x2, y2, col, rounding)
-    if drawList and drawList.AddRectFilled then pcall(function() drawList:AddRectFilled(x1, y1, x2, y2, col, rounding or 0) end) end
-end
-
-local function uiDrawRect(drawList, x1, y1, x2, y2, col, rounding, flags, thickness)
-    if drawList and drawList.AddRect then pcall(function() drawList:AddRect(x1, y1, x2, y2, col, rounding or 0, flags or 0, thickness or 1) end) end
-end
-
-local function uiDrawCircleFilled(drawList, x, y, radius, col, segments)
-    if drawList and drawList.AddCircleFilled then pcall(function() drawList:AddCircleFilled(x, y, radius, col, segments or 16) end) end
-end
-
-local function uiDrawCircle(drawList, x, y, radius, col, segments, thickness)
-    if drawList and drawList.AddCircle then pcall(function() drawList:AddCircle(x, y, radius, col, segments or 16, thickness or 1) end) end
-end
-
-local function uiDrawText(drawList, x, y, col, text)
-    if drawList and drawList.AddText then pcall(function() drawList:AddText(x, y, col, tostring(text or '')) end) end
-end
-
-local function uiDrawLine(drawList, x1, y1, x2, y2, col, thickness)
-    if drawList and drawList.AddLine then pcall(function() drawList:AddLine(x1, y1, x2, y2, col, thickness or 1) end) end
-end
-
-local function uiDrawTriangleFilled(drawList, ax, ay, bx, by, cx, cy, col)
-    if drawList and drawList.AddTriangleFilled then pcall(function() drawList:AddTriangleFilled(ax, ay, bx, by, cx, cy, col) end) end
 end
 
 local function isGamePaused()
@@ -826,23 +713,6 @@ local function getVehicleSpeed(veh)
         if ok and type(v) == 'number' then return v end
     end
     return nil
-end
-
-local function getVehicleForward2D(veh)
-    -- Prefer the vehicle's actual forward vector. Fall back to velocity, then north.
-    local probes = {
-        function() return veh and veh.getDirectionVector and veh:getDirectionVector() end,
-        function() return veh and veh.getDirectionVectorUp and veh:getDirectionVectorUp() end,
-        function() return veh and veh.getVelocity and veh:getVelocity() end,
-    }
-    for _, fn in ipairs(probes) do
-        local ok, v = pcall(fn)
-        if ok and v and type(v.x) == "number" and type(v.y) == "number" then
-            local len = math.sqrt(v.x * v.x + v.y * v.y)
-            if len > 0.001 then return v.x / len, v.y / len end
-        end
-    end
-    return 0, 1
 end
 
 local function addSpawnedVehicle(id, role)
@@ -1127,14 +997,8 @@ local function startChase(point, playerPos)
     local playerID = playerVeh:getID()
     if not playerID then return end
 
-    local fwdX, fwdY = getVehicleForward2D(playerVeh)
-    local rightX, rightY = -fwdY, fwdX
-    local lateral = math.random(-35, 35)
-    local spawnPos = vec3(
-        playerPos.x + fwdX * CHASE_SPAWN_OFFSET + rightX * lateral,
-        playerPos.y + fwdY * CHASE_SPAWN_OFFSET + rightY * lateral,
-        playerPos.z + 1.0
-    )
+    local offset   = vec3(math.random(-40, 40), CHASE_SPAWN_OFFSET, 0)
+    local spawnPos = vec3(playerPos.x + offset.x, playerPos.y + offset.y, playerPos.z)
 
     -- core_vehicles.spawnNewVehicle returns the vehicle object (userdata), not a number.
     local targetVeh = core_vehicles.spawnNewVehicle(CHASE_TARGET_MODEL, {
@@ -1147,9 +1011,6 @@ local function startChase(point, playerPos)
 
     if targetVeh then
         local targetID = targetVeh:getID()
-        mission.chaseGraceTimer = CHASE_START_GRACE
-        targetStoppedSecs = 0
-        targetLastPos = nil
         addSpawnedVehicle(targetID, "target")
         targetVeh:queueLuaCommand(
             "ai.setMode('flee'); ai.setTargetObjectID(" .. tostring(playerID) .. ")"
@@ -1445,7 +1306,6 @@ local function startMission(point)
         started = false,
         startDelay = 0.25,
         playerImmobilizedTimer = 0,
-        chaseGraceTimer = 0,
     }
 
     -- Capture this exact location as the mission-start recovery/home point, then
@@ -1498,10 +1358,7 @@ function cleanupMission(success, failMsg)
     if guihooks then guihooks.trigger('setLoading', { loading = false }); loaderActive = false end
 
     if success then
-        if completedType then
-            missionCompletedByType[completedType] = (missionCompletedByType[completedType] or 0) + 1
-            saveProgress()
-        end
+        missionCompletedByType[completedType] = (missionCompletedByType[completedType] or 0) + 1
         notify("success", "Mission Complete!", "Well done!  '" .. completedName .. "' completed!")
         setBigBanner("MISSION COMPLETE", 3.0)
         -- Rebuild available markers so the next harder mission of this type unlocks.
@@ -1630,24 +1487,14 @@ local function missionInstruction(mtype)
 end
 
 -- ── ImGui HUD panel ────────────────────────────────────────────────────────────
-local function drawInlinePlayerHealth()
-    if not im then return end
-    playerBodyHp = math.max(0, math.min(PLAYER_BODY_MAX_HP, playerBodyHp or PLAYER_BODY_MAX_HP))
-    local pct = (playerBodyHp / PLAYER_BODY_MAX_HP) * 100
-    im.TextColored(im.ImVec4(0.35, 1.0, 0.35, 1.0),
-        string.format("  PLAYER HP: %d / %d  (%.0f%%)", playerBodyHp, PLAYER_BODY_MAX_HP, pct))
-    im.TextColored(im.ImVec4(0.72, 0.88, 1.0, 1.0),
-        "  " .. tostring(playerHealthDebugText or "No HP debug yet."))
-end
-
 local function drawHUD()
     if not im then return end
     local playerPos = getPlayerPos()
     if not playerPos then return end
 
     local width = mission and HUD_WINDOW_WIDTH or HUD_WINDOW_WIDTH
-    uiSetNextWindowSize(width, 0)
-    uiSetNextWindowPos(anchoredPos("leftMiddle", width, 520, 24, 24))
+    im.SetNextWindowSize(im.ImVec2(width, 0), im.Cond_Always)
+    im.SetNextWindowPos(anchoredPos("leftMiddle", width, 520, 24, 24), im.Cond_Always)
     im.SetNextWindowBgAlpha(0.86)
 
     local winFlags = bit.bor(
@@ -1658,7 +1505,7 @@ local function drawHUD()
         im.WindowFlags_NoScrollbar
     )
 
-    local drawn = uiBeginWindow("##jonesingMissionInfo", winFlags)
+    local drawn = im.Begin("##jonesingMissionInfo", nil, winFlags)
     if drawn then
         if im.SetWindowFontScale then im.SetWindowFontScale(HUD_SCALE) end
         if mission then
@@ -1668,8 +1515,6 @@ local function drawHUD()
             local stars = wantedStars(wantedLevelForMission(mtype))
 
             im.TextColored(im.ImVec4(1.0, 0.85, 0.0, 1.0), "  JONESING MISSIONS")
-            im.Separator()
-            drawInlinePlayerHealth()
             im.Separator()
             im.TextColored(tc, string.format("  [%s] %s", tag, missionDisplayName(mp)))
             im.TextColored(im.ImVec4(1.0, 0.85, 0.25, 1.0), "  Difficulty: " .. tostring(mp.difficulty or "Easy"))
@@ -1687,10 +1532,6 @@ local function drawHUD()
                         info and info.dir or "??",
                         info and formatMeters(info.dist) or "gone",
                         CHASE_ESCAPE_DISTANCE))
-                if (mission.chaseGraceTimer or 0) > 0 then
-                    im.TextColored(im.ImVec4(0.35, 1.0, 0.35, 1.0),
-                        string.format("  Chase grace: %d s", math.ceil(mission.chaseGraceTimer or 0)))
-                end
                 im.TextColored(im.ImVec4(1.0, 0.4, 0.4, 1.0),
                     string.format("  Immobilized: %.1f / %.0f s", targetStoppedSecs, CHASE_STOPPED_TIME))
 
@@ -1775,14 +1616,7 @@ local function drawHUD()
         else
             im.TextColored(im.ImVec4(1.0, 0.85, 0.0, 1.0), "  JONESING MISSIONS")
             im.Separator()
-            drawInlinePlayerHealth()
-            im.Separator()
             im.TextColored(im.ImVec4(0.75, 0.75, 0.75, 1.0), "  Drive into a pillar to start a mission.")
-            im.TextColored(im.ImVec4(0.55, 0.80, 1.0, 1.0),
-                "  Progress is saved automatically when missions are completed.")
-            if im.Button("  [ RESET SAVED PROGRESS ]  ") then
-                resetProgress()
-            end
 
             -- Idle mode: compact list of nearby/available missions.
             for _, mp in ipairs(missionPoints) do
@@ -1820,11 +1654,11 @@ local function drawPlayerHealthWidget()
     if not im then return end
     local hp, pct = getPlayerBodyHealthPercent()
     local w, h = PLAYER_HP_WINDOW_W, PLAYER_HP_WINDOW_H
-    uiSetNextWindowSize(w, h)
-    uiSetNextWindowPos(anchoredPos("topCenter", w, h, 24, 18))
+    im.SetNextWindowSize(im.ImVec2(w, h), im.Cond_Always)
+    im.SetNextWindowPos(anchoredPos("topCenter", w, h, 24, 18), im.Cond_Always)
     im.SetNextWindowBgAlpha(0.78)
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings, im.WindowFlags_NoScrollbar)
-    if uiBeginWindow("##jonesingPlayerHealth", flags) then
+    if im.Begin("##jonesingPlayerHealth", nil, flags) then
         if im.SetWindowFontScale then im.SetWindowFontScale(1.25) end
         im.TextColored(im.ImVec4(0.95, 0.95, 0.95, 1.0), string.format(" PLAYER HP  %d / %d  (%.0f%%)", hp, PLAYER_BODY_MAX_HP, pct))
         im.TextColored(im.ImVec4(0.72, 0.88, 1.0, 1.0), " " .. tostring(playerHealthDebugText or "No HP debug yet."))
@@ -1842,14 +1676,14 @@ local function drawPlayerHealthWidget()
             local edge = imguiColor(0.90, 0.90, 0.90, 0.85)
             local fill = imguiColor(0.25, 1.00, 0.35, 1.00)
             -- Draw background first, then green fill, then border. Full HP should look FULL, not empty.
-            uiDrawRectFilled(drawList, x1, y1, x2, y2, bg, 4)
+            pcall(function() drawList:AddRectFilled(im.ImVec2(x1, y1), im.ImVec2(x2, y2), bg, 4) end)
             if fillX > x1 + 1 then
-                uiDrawRectFilled(drawList, x1, y1, fillX, y2, fill, 4)
+                pcall(function() drawList:AddRectFilled(im.ImVec2(x1, y1), im.ImVec2(fillX, y2), fill, 4) end)
             end
-            uiDrawRect(drawList, x1, y1, x2, y2, edge, 4, 0, 1.5)
+            pcall(function() drawList:AddRect(im.ImVec2(x1, y1), im.ImVec2(x2, y2), edge, 4, 0, 1.5) end)
         elseif im.ProgressBar then
             -- BeamNG fallback when draw-list colored rectangles fail.
-            pcall(function() im.ProgressBar(pct / 100, w - 36, 18, string.format('%.0f%%', pct)) end)
+            im.ProgressBar(pct / 100, im.ImVec2(w - 36, 18), string.format('%.0f%%', pct))
         end
     end
     im.End()
@@ -1857,11 +1691,11 @@ end
 
 local function drawLoaderOverlay()
     if not im or not loaderActive then return end
-    uiSetNextWindowSize(520, 120)
-    uiSetNextWindowPos(anchoredPos("center", 520, 120, 24, 24))
+    im.SetNextWindowSize(im.ImVec2(520, 120), im.Cond_Always)
+    im.SetNextWindowPos(anchoredPos("center", 520, 120, 24, 24), im.Cond_Always)
     im.SetNextWindowBgAlpha(0.92)
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings)
-    if uiBeginWindow("##jonesingLoaderOverlay", flags) then
+    if im.Begin("##jonesingLoaderOverlay", nil, flags) then
         if im.SetWindowFontScale then im.SetWindowFontScale(1.65) end
         im.TextColored(im.ImVec4(1.0, 0.85, 0.10, 1.0), "  LOADING / SPAWNING TRAFFIC")
         im.Separator()
@@ -1877,11 +1711,11 @@ local function drawBottomBanner(playerPos)
         text = string.upper(mission.point.type) .. " - " .. missionInstruction(mission.point.type)
     end
     if not text or text == "" then return end
-    uiSetNextWindowSize(900, 100)
-    uiSetNextWindowPos(anchoredPos("bottomCenter", 900, 100, 24, 42))
+    im.SetNextWindowSize(im.ImVec2(900, 100), im.Cond_Always)
+    im.SetNextWindowPos(anchoredPos("bottomCenter", 900, 100, 24, 42), im.Cond_Always)
     im.SetNextWindowBgAlpha(0.78)
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings)
-    if uiBeginWindow("##jonesingBottomBanner", flags) then
+    if im.Begin("##jonesingBottomBanner", nil, flags) then
         if im.SetWindowFontScale then im.SetWindowFontScale(1.85) end
         im.TextColored(im.ImVec4(1.0, 0.85, 0.0, 1.0), "  " .. text)
     end
@@ -1890,7 +1724,7 @@ end
 
 function imguiColor(r, g, b, a)
     if im and im.GetColorU32 then
-        local ok, c = pcall(function() return im.GetColorU32(r, g, b, a or 1) end)
+        local ok, c = pcall(function() return im.GetColorU32(im.ImVec4(r, g, b, a or 1)) end)
         if ok then return c end
     end
     return 0xffffffff
@@ -1914,13 +1748,13 @@ local function drawRadarPoint(drawList, cx, cy, px, py, radius, item)
     -- Draw-list blips are pretty, but some BeamNG ImGui builds silently ignore a few
     -- draw-list calls. Also render a text glyph fallback at the same position.
     if drawList then
-        uiDrawCircleFilled(drawList, sx, sy, 8.5, col, 16)
-        uiDrawCircle(drawList, sx, sy, 10.5, imguiColor(1,1,1,0.95), 16, 2.0)
-        uiDrawText(drawList, sx + 10, sy - 9, imguiColor(1,1,1,1), tostring(item.label or "*"))
+        pcall(function() drawList:AddCircleFilled(im.ImVec2(sx, sy), 8.5, col, 16) end)
+        pcall(function() drawList:AddCircle(im.ImVec2(sx, sy), 10.5, imguiColor(1,1,1,0.95), 16, 2.0) end)
+        pcall(function() drawList:AddText(im.ImVec2(sx + 10, sy - 9), imguiColor(1,1,1,1), tostring(item.label or "*")) end)
     end
     if im and im.SetCursorScreenPos then
         pcall(function()
-            uiSetCursorScreenPos(sx - 5, sy - 8)
+            im.SetCursorScreenPos(im.ImVec2(sx - 5, sy - 8))
             im.TextColored(im.ImVec4(r, g, b, a), tostring(item.label or "*"))
         end)
     end
@@ -1960,7 +1794,9 @@ local function drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading
             local py = -math.cos(ang) * dist * scale
             -- tiny road-node square; cheap and reliable. This makes nearby roads visible even if
             -- graph edge topology differs between maps.
-            uiDrawRectFilled(drawList, cx + px - 1.5, cy + py - 1.5, cx + px + 1.5, cy + py + 1.5, roadCol, 1)
+            pcall(function()
+                drawList:AddRectFilled(im.ImVec2(cx + px - 1.5, cy + py - 1.5), im.ImVec2(cx + px + 1.5, cy + py + 1.5), roadCol, 1)
+            end)
             drawn = drawn + 1
         end
     end
@@ -1981,25 +1817,22 @@ local function drawPlayerRadarArrow(drawList, cx, cy, radarHeading)
     local function rotPoint(x, y)
         -- local arrow points upward; rotate by car direction relative to camera-relative radar
         local ca, sa = math.cos(rel - math.pi * 0.5), math.sin(rel - math.pi * 0.5)
-        return cx + x * ca - y * sa, cy + x * sa + y * ca
+        return im.ImVec2(cx + x * ca - y * sa, cy + x * sa + y * ca)
     end
     local pcol = imguiColor(0.20, 1.0, 0.30, 1.0)
-    local ax, ay = rotPoint(0, -15)
-    local bx, by = rotPoint(-9, 10)
-    local cx2, cy2 = rotPoint(9, 10)
-    uiDrawTriangleFilled(drawList, ax, ay, bx, by, cx2, cy2, pcol)
-    uiDrawCircle(drawList, cx, cy, 14, imguiColor(1,1,1,0.95), 20, 2.0)
-    uiDrawText(drawList, cx - 24, cy + 18, imguiColor(0.70,1.0,0.70,1.0), 'YOU')
+    pcall(function() drawList:AddTriangleFilled(rotPoint(0, -15), rotPoint(-9, 10), rotPoint(9, 10), pcol) end)
+    pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), 14, imguiColor(1,1,1,0.95), 20, 2.0) end)
+    pcall(function() drawList:AddText(im.ImVec2(cx - 24, cy + 18), imguiColor(0.70,1.0,0.70,1.0), 'YOU') end)
 end
 
 local function drawRadar(playerPos)
     if not im or not playerPos then return end
     local w, h = RADAR_WINDOW_SIZE, RADAR_WINDOW_SIZE
-    uiSetNextWindowSize(w, h)
-    uiSetNextWindowPos(anchoredPos("rightMiddle", w, h, 28, 24))
+    im.SetNextWindowSize(im.ImVec2(w, h), im.Cond_Always)
+    im.SetNextWindowPos(anchoredPos("rightMiddle", w, h, 28, 24), im.Cond_Always)
     im.SetNextWindowBgAlpha(0.72)
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings, im.WindowFlags_NoScrollbar)
-    if uiBeginWindow("##jonesingRadar", flags) then
+    if im.Begin("##jonesingRadar", nil, flags) then
         local drawList = im.GetWindowDrawList and im.GetWindowDrawList()
         local pos = im.GetWindowPos and im.GetWindowPos() or im.ImVec2(0,0)
         local cx = pos.x + w * 0.5
@@ -2010,11 +1843,11 @@ local function drawRadar(playerPos)
             local bg = imguiColor(0.02, 0.03, 0.04, 0.88)
             local ring = imguiColor(0.65, 0.85, 1.0, 0.85)
             local soft = imguiColor(0.65, 0.85, 1.0, 0.22)
-            uiDrawCircleFilled(drawList, cx, cy, radius + 8, bg, 64)
-            uiDrawCircle(drawList, cx, cy, radius, ring, 64, 2.0)
-            uiDrawCircle(drawList, cx, cy, radius * 0.50, soft, 48, 1.0)
-            uiDrawLine(drawList, cx - radius, cy, cx + radius, cy, soft, 1.0)
-            uiDrawLine(drawList, cx, cy - radius, cx, cy + radius, soft, 1.0)
+            pcall(function() drawList:AddCircleFilled(im.ImVec2(cx, cy), radius + 8, bg, 64) end)
+            pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), radius, ring, 64, 2.0) end)
+            pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), radius * 0.50, soft, 48, 1.0) end)
+            pcall(function() drawList:AddLine(im.ImVec2(cx - radius, cy), im.ImVec2(cx + radius, cy), soft, 1.0) end)
+            pcall(function() drawList:AddLine(im.ImVec2(cx, cy - radius), im.ImVec2(cx, cy + radius), soft, 1.0) end)
         end
 
         local camDir = getCameraForwardVectorFallback()
@@ -2122,24 +1955,11 @@ local function drawTargetArrows(playerPos)
     end
 end
 
-local function shouldHideJonesingUI()
-    -- Hide all custom UI while paused or while a BeamNG/Career/menu overlay is actively taking keyboard/text focus.
-    if isGamePaused() then return true end
-    if im and im.GetIO then
-        local ok, io = pcall(im.GetIO)
-        if ok and io then
-            if io.WantTextInput == true then return true end
-            -- Keyboard capture is a stronger signal than mouse capture; mouse capture can be caused by our own ImGui windows.
-            if io.WantCaptureKeyboard == true then return true end
-        end
-    end
-    return false
-end
-
 local function drawJonesingUI()
-    -- One unified custom UI pass. Player HP is drawn inline in drawHUD(), not as a separate app/window.
-    if shouldHideJonesingUI() then return end
+    -- Hide all custom UI while paused/menu is open. This keeps the pause/menu screen clean.
+    if isGamePaused() then return end
     local playerPos = getPlayerPos()
+    drawPlayerHealthWidget()
     drawHUD()
     drawRadar(playerPos)
     drawBottomBanner(playerPos)
@@ -2152,10 +1972,6 @@ end
 local function checkChaseSuccess()
     -- Startup guard: never pass chase before the target exists.
     if not mission or mission.starting or not mission.started then
-        return false
-    end
-
-    if (mission.chaseGraceTimer or 0) > 0 then
         return false
     end
 
@@ -2191,11 +2007,6 @@ end
 -- Tracks the chase target's speed by comparing positions between frames.
 -- Updates targetStoppedSecs (accumulated time the target has been near-stationary).
 local function tickChaseTargetSpeed(dt)
-    if mission and (mission.chaseGraceTimer or 0) > 0 then
-        targetStoppedSecs = 0
-        targetLastPos = nil
-        return
-    end
     targetSpeedTimer = targetSpeedTimer + dt
     if targetSpeedTimer < CHASE_SPEED_INTERVAL then return end
     targetSpeedTimer = 0
@@ -2500,10 +2311,6 @@ local function onUpdate(dt, dtSim)
         end
     end
 
-    -- Hide ALL of our custom visuals while paused/menu UI is open, including debugDrawer
-    -- arrows/beacons/radar/HUD. Mission timers are already sim-dt safe above.
-    if shouldHideJonesingUI() then return end
-
     if bigBannerTimer and bigBannerTimer > 0 then
         bigBannerTimer = math.max(0, bigBannerTimer - rawDt)
         if bigBannerTimer <= 0 then bigBannerText = "" end
@@ -2670,10 +2477,9 @@ local function onUpdate(dt, dtSim)
         end
 
         if mtype == CHASE then
-            mission.chaseGraceTimer = math.max(0, (mission.chaseGraceTimer or 0) - dt)
             tickChaseTargetSpeed(dt)
             local tDist = getTargetDist(playerPos)
-            if (mission.chaseGraceTimer or 0) <= 0 and tDist and tDist > CHASE_ESCAPE_DISTANCE then
+            if tDist and tDist > CHASE_ESCAPE_DISTANCE then
                 cleanupMission(false, "The target got away!")
                 return
             end
@@ -2785,7 +2591,6 @@ end
 
 -- ── Extension hooks ────────────────────────────────────────────────────────────
 local function onExtensionLoaded()
-    loadProgress()
     playerBodyHp = PLAYER_BODY_MAX_HP
     playerHealthDebugText = "Extension loaded: HP initialized to 100."
     log("I", "jonesingMissions",
@@ -2826,18 +2631,6 @@ end
 
 function M.resetPlayerBodyHealth()
     playerBodyHp = PLAYER_BODY_MAX_HP
-end
-
-function M.saveProgress()
-    saveProgress()
-end
-
-function M.loadProgress()
-    loadProgress()
-end
-
-function M.resetProgress()
-    resetProgress()
 end
 
 function M.reportDriverSeatCrush(severity)
