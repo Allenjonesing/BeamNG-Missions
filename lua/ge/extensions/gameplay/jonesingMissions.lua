@@ -248,6 +248,7 @@ local RADAR_ROAD_DRAW_LIMIT = 120
 local DIST_KM_THRESHOLD   = 1000   -- metres; above this shown in km
 local PLAYER_HP_WINDOW_W  = 520
 local PLAYER_HP_WINDOW_H  = 118
+local AUTOSAVE_PATH       = "/settings/jonesingMissions.autosave.json"
 
 -- Player/body health placeholder.  This intentionally represents the player/unicycle
 -- concept, NOT the vehicle condition.  It stays at 100 for now until the body damage
@@ -288,6 +289,52 @@ local playerHealthLastReason = "none"
 local playerHealthLastDamage = 0
 local playerHealthLastSpeedDrop = 0
 local getPlayerVehicle  = nil -- forward declaration used by helpers above the concrete function
+
+local function sanitizeMissionProgress(data)
+    local out = {}
+    if type(data) ~= "table" then return out end
+    for _, tpl in ipairs(missionTemplates) do
+        local value = math.max(0, math.floor(tonumber(data[tpl.type]) or 0))
+        if value > (out[tpl.type] or 0) then
+            out[tpl.type] = value
+        end
+    end
+    return out
+end
+
+local function saveAutosave(reason)
+    if not jsonWriteFile then return false end
+    local payload = {
+        version = 1,
+        reason = reason or "autosave",
+        savedAt = os and os.time and os.time() or nil,
+        missionCompletedByType = sanitizeMissionProgress(missionCompletedByType),
+        playerBodyHp = math.max(0, math.min(PLAYER_BODY_MAX_HP, tonumber(playerBodyHp) or PLAYER_BODY_MAX_HP)),
+    }
+
+    local ok, wrote = pcall(jsonWriteFile, AUTOSAVE_PATH, payload, true)
+    if ok and wrote ~= false then
+        return true
+    end
+
+    log("W", "jonesingMissions", "Autosave failed: " .. tostring(reason or "autosave"))
+    return false
+end
+
+local function loadAutosave()
+    if not jsonReadFile then return false end
+
+    local ok, data = pcall(jsonReadFile, AUTOSAVE_PATH)
+    if not ok or type(data) ~= "table" then
+        missionCompletedByType = {}
+        playerBodyHp = PLAYER_BODY_MAX_HP
+        return false
+    end
+
+    missionCompletedByType = sanitizeMissionProgress(data.missionCompletedByType)
+    playerBodyHp = math.max(0, math.min(PLAYER_BODY_MAX_HP, tonumber(data.playerBodyHp) or PLAYER_BODY_MAX_HP))
+    return true
+end
 
 
 -- ── Road position finding ──────────────────────────────────────────────────────
@@ -1359,6 +1406,7 @@ function cleanupMission(success, failMsg)
 
     if success then
         missionCompletedByType[completedType] = (missionCompletedByType[completedType] or 0) + 1
+        saveAutosave("mission_complete")
         notify("success", "Mission Complete!", "Well done!  '" .. completedName .. "' completed!")
         setBigBanner("MISSION COMPLETE", 3.0)
         -- Rebuild available markers so the next harder mission of this type unlocks.
@@ -2592,12 +2640,19 @@ end
 -- ── Extension hooks ────────────────────────────────────────────────────────────
 local function onExtensionLoaded()
     playerBodyHp = PLAYER_BODY_MAX_HP
-    playerHealthDebugText = "Extension loaded: HP initialized to 100."
+    if loadAutosave() then
+        playerHealthDebugText = string.format("Autosave loaded: HP restored to %d.", playerBodyHp)
+    else
+        playerHealthDebugText = "No autosave found: HP initialized to 100."
+    end
+    initialized = false
+    initTimer = 0
     log("I", "jonesingMissions",
         "Jonesing GTA-like Mission System loaded — " .. #missionTemplates .. " total templates registered; runtime tiers enabled.")
 end
 
 local function onExtensionUnloaded()
+    saveAutosave("extension_unload")
     cleanupMission(false)
     log("I", "jonesingMissions", "Jonesing Mission System unloaded.")
 end
@@ -2627,10 +2682,12 @@ end
 function M.setPlayerBodyHealth(percent)
     local n = tonumber(percent) or PLAYER_BODY_MAX_HP
     playerBodyHp = math.max(0, math.min(PLAYER_BODY_MAX_HP, n))
+    saveAutosave("body_health_set")
 end
 
 function M.resetPlayerBodyHealth()
     playerBodyHp = PLAYER_BODY_MAX_HP
+    saveAutosave("body_health_reset")
 end
 
 function M.reportDriverSeatCrush(severity)
@@ -2644,7 +2701,19 @@ function M.reportDriverSeatCrush(severity)
         playerHealthLastReason = 'driver_seat_crush'
         playerHealthLastDamage = dmg
         playerHealthDebugText = string.format('Last hit: -%d HP from driver/seat crush severity %.2f.', dmg, sev)
+        saveAutosave("driver_seat_crush")
     end
+end
+
+function M.saveAutosave()
+    return saveAutosave("manual_save")
+end
+
+function M.loadAutosave()
+    local loaded = loadAutosave()
+    initialized = false
+    initTimer = 0
+    return loaded
 end
 
 return M
