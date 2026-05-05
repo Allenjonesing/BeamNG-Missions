@@ -158,10 +158,11 @@ local CHASE_DAMAGE_THRESH   = 0.50   -- damage fraction that counts as "destroye
 local CHASE_ESCAPE_DISTANCE = 200    -- metres: target beyond this = got away (CHASE fail)
 local CHASE_SPAWN_OFFSET    = 10     -- metres ahead of player to spawn the target
 local CHASE_TARGET_MODEL    = "etk800"
-local CHASE_STOPPED_SPEED   = 5.0    -- m/s: below this the target is considered stopped
-local CHASE_STOPPED_TIME    = 5.0    -- seconds: target stopped this long = destroyed / immobilized
+local CHASE_STOPPED_SPEED   = 3.0    -- m/s: below this the target is considered stopped
+local CHASE_STOPPED_COOLDOWN = 5.0   -- seconds after spawn before stopped-time starts counting
+local CHASE_STOPPED_TIME    = 10.0    -- seconds: target stopped this long = destroyed / immobilized
 local CHASE_SPEED_INTERVAL  = 0.5    -- seconds between speed checks
-local POLICE_SPAWN_RADIUS   = { min = 40, max = 60 }
+local POLICE_SPAWN_RADIUS   = { min = 100, max = 200 }
 local POLICE_COUNT          = 4      -- 4 feels more GTA-like without murdering performance
 local POLICE_SPAWN_ATTEMPTS = 5      -- fewer attempts; bad .pc paths get expensive during mission start
 
@@ -185,7 +186,7 @@ local FOLLOW_MIN_DIST       = 20     -- metres: too close = out-of-range
 local FOLLOW_MAX_DIST       = 150    -- metres: too far  = out-of-range
 local FOLLOW_GRACE          = 10.0   -- seconds the player can be out-of-range before failing
 local FOLLOW_IMMUNITY       = 20.0   -- seconds at mission start before "too close" detection activates
-local FOLLOW_DURATION       = 90     -- seconds of sustained in-range following = success
+local FOLLOW_DURATION       = 300     -- seconds of sustained in-range following = success
 local FOLLOW_DAMAGE_THRESH  = 0.10   -- damage to followed vehicle that triggers failure
 local FOLLOW_DMG_INTERVAL   = 1.0    -- seconds between VE-side damage re-checks
 
@@ -249,6 +250,15 @@ local DIST_KM_THRESHOLD   = 1000   -- metres; above this shown in km
 local PLAYER_HP_WINDOW_W  = 520
 local PLAYER_HP_WINDOW_H  = 118
 local AUTOSAVE_PATH       = "/settings/jonesingMissions.autosave.json"
+
+-- Mission type visibility toggles. Enabled types should always have one active marker.
+local ALLOW_MISSION_TYPE_CHASE  = true
+local ALLOW_MISSION_TYPE_ESCAPE = true
+local ALLOW_MISSION_TYPE_FOLLOW = true
+local ALLOW_MISSION_TYPE_ENDURE = true
+local ALLOW_MISSION_TYPE_REACH  = true
+local ALLOW_MISSION_TYPE_RALLY  = true
+local ALLOW_MISSION_TYPE_CRUISE = true
 
 -- Player/body health placeholder.  This intentionally represents the player/unicycle
 -- concept, NOT the vehicle condition.  It stays at 100 for now until the body damage
@@ -453,15 +463,51 @@ local function missionDisplayName(mp)
     return string.format("%s  [T%d / %s]", tostring(mp.name or "Mission"), tier, diff)
 end
 
+local function isMissionTypeEnabled(mtype)
+    if mtype == CHASE  then return ALLOW_MISSION_TYPE_CHASE end
+    if mtype == ESCAPE then return ALLOW_MISSION_TYPE_ESCAPE end
+    if mtype == FOLLOW then return ALLOW_MISSION_TYPE_FOLLOW end
+    if mtype == ENDURE then return ALLOW_MISSION_TYPE_ENDURE end
+    if mtype == REACH  then return ALLOW_MISSION_TYPE_REACH end
+    if mtype == RALLY  then return ALLOW_MISSION_TYPE_RALLY end
+    if mtype == CRUISE then return ALLOW_MISSION_TYPE_CRUISE end
+    return false
+end
+
 local function activeMissionTemplates()
     ensureTemplateTiers()
     local active = {}
+    local templatesByType = {}
+
     for _, tpl in ipairs(missionTemplates) do
-        local nextTier = (missionCompletedByType[tpl.type] or 0) + 1
-        if tpl.tier == nextTier then
-            table.insert(active, tpl)
+        if isMissionTypeEnabled(tpl.type) then
+            templatesByType[tpl.type] = templatesByType[tpl.type] or {}
+            table.insert(templatesByType[tpl.type], tpl)
         end
     end
+
+    local typeOrder = { CHASE, ESCAPE, FOLLOW, ENDURE, REACH, RALLY, CRUISE }
+    for _, mtype in ipairs(typeOrder) do
+        local list = templatesByType[mtype]
+        if list and #list > 0 then
+            local desiredTier = (missionCompletedByType[mtype] or 0) + 1
+            local chosen = nil
+            local highestTier = nil
+
+            for _, tpl in ipairs(list) do
+                if tpl.tier == desiredTier then
+                    chosen = tpl
+                    break
+                end
+                if not highestTier or (tpl.tier or 0) > (highestTier.tier or 0) then
+                    highestTier = tpl
+                end
+            end
+
+            table.insert(active, chosen or highestTier)
+        end
+    end
+
     return active
 end
 
@@ -1059,6 +1105,7 @@ local function startChase(point, playerPos)
     if targetVeh then
         local targetID = targetVeh:getID()
         addSpawnedVehicle(targetID, "target")
+        mission.chaseStoppedCooldown = CHASE_STOPPED_COOLDOWN
         targetVeh:queueLuaCommand(
             "ai.setMode('flee'); ai.setTargetObjectID(" .. tostring(playerID) .. ")"
         )
@@ -1838,7 +1885,7 @@ local function drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading
         local dist = math.sqrt(dx * dx + dy * dy)
         if dist < RADAR_RANGE_METERS then
             local ang = math.atan2(dy, dx) - heading
-            local px = math.sin(ang) * dist * scale
+            local px = -math.sin(ang) * dist * scale
             local py = -math.cos(ang) * dist * scale
             -- tiny road-node square; cheap and reliable. This makes nearby roads visible even if
             -- graph edge topology differs between maps.
@@ -1951,7 +1998,7 @@ local function drawRadar(playerPos)
             -- Rotate world coordinates so the player's forward direction is radar-up.
             local ang = math.atan2(dy, dx) - heading
             local dist = math.min(item.dist or math.sqrt(dx*dx+dy*dy), RADAR_RANGE_METERS)
-            local px = math.sin(ang) * dist * scale
+            local px = -math.sin(ang) * dist * scale
             local py = -math.cos(ang) * dist * scale
             if drawList then drawRadarPoint(drawList, cx, cy, px, py, radius, item) end
         end
@@ -2055,15 +2102,27 @@ end
 -- Tracks the chase target's speed by comparing positions between frames.
 -- Updates targetStoppedSecs (accumulated time the target has been near-stationary).
 local function tickChaseTargetSpeed(dt)
-    targetSpeedTimer = targetSpeedTimer + dt
-    if targetSpeedTimer < CHASE_SPEED_INTERVAL then return end
-    targetSpeedTimer = 0
-
     for _, vd in ipairs(spawnedVehicles) do
         if vd.role == "target" then
             local v = be:getObjectByID(vd.id)
             if not v then return end
             local pos = v:getPosition()
+
+            if mission and (mission.chaseStoppedCooldown or 0) > 0 then
+                mission.chaseStoppedCooldown = math.max(0, (mission.chaseStoppedCooldown or 0) - dt)
+                targetStoppedSecs = 0
+                targetLastPos = pos
+                targetSpeedTimer = 0
+                return
+            end
+
+            targetSpeedTimer = targetSpeedTimer + dt
+            if targetSpeedTimer < CHASE_SPEED_INTERVAL then
+                targetLastPos = pos
+                return
+            end
+            targetSpeedTimer = 0
+
             if targetLastPos then
                 local moved = pos:distance(targetLastPos)
                 local speed = moved / CHASE_SPEED_INTERVAL  -- metres per second
