@@ -151,7 +151,7 @@ local missionTemplates = {
 
 -- ── Tuning constants ───────────────────────────────────────────────────────────
 local PULSE_SPEED           = 1.5    -- marker pulse rate (radians / second)
-local ESCAPE_TIME_LIMIT     = 60    -- seconds before ESCAPE mission fails
+local ESCAPE_TIME_LIMIT     = 120    -- seconds before ESCAPE mission fails
 local MISSION_COOLDOWN      = 10     -- seconds before the same marker can re-trigger
 local ESCAPE_MIN_DISTANCE   = 500    -- metres: all police beyond this = escaped (ESCAPE win)
 local CHASE_DAMAGE_THRESH   = 0.50   -- damage fraction that counts as "destroyed"
@@ -159,9 +159,10 @@ local CHASE_ESCAPE_DISTANCE = 200    -- metres: target beyond this = got away (C
 local CHASE_SPAWN_OFFSET    = 10     -- metres ahead of player to spawn the target
 local CHASE_TARGET_MODEL    = "etk800"
 local CHASE_STOPPED_SPEED   = 5.0    -- m/s: below this the target is considered stopped
+local CHASE_STOPPED_COOLDOWN = 5.0   -- seconds after spawn before stopped-time starts counting
 local CHASE_STOPPED_TIME    = 5.0    -- seconds: target stopped this long = destroyed / immobilized
 local CHASE_SPEED_INTERVAL  = 0.5    -- seconds between speed checks
-local POLICE_SPAWN_RADIUS   = { min = 40, max = 60 }
+local POLICE_SPAWN_RADIUS   = { min = 100, max = 200 }
 local POLICE_COUNT          = 4      -- 4 feels more GTA-like without murdering performance
 local POLICE_SPAWN_ATTEMPTS = 5      -- fewer attempts; bad .pc paths get expensive during mission start
 
@@ -185,7 +186,7 @@ local FOLLOW_MIN_DIST       = 20     -- metres: too close = out-of-range
 local FOLLOW_MAX_DIST       = 150    -- metres: too far  = out-of-range
 local FOLLOW_GRACE          = 10.0   -- seconds the player can be out-of-range before failing
 local FOLLOW_IMMUNITY       = 20.0   -- seconds at mission start before "too close" detection activates
-local FOLLOW_DURATION       = 90     -- seconds of sustained in-range following = success
+local FOLLOW_DURATION       = 300     -- seconds of sustained in-range following = success
 local FOLLOW_DAMAGE_THRESH  = 0.10   -- damage to followed vehicle that triggers failure
 local FOLLOW_DMG_INTERVAL   = 1.0    -- seconds between VE-side damage re-checks
 
@@ -243,17 +244,10 @@ local INIT_TIMEOUT         = 5.0    -- seconds to wait for map data before using
 local HUD_WINDOW_WIDTH    = 540
 local HUD_SCALE           = 1.50
 local RADAR_WINDOW_SIZE   = 320
-local RADAR_RANGE_METERS  = 500
+local RADAR_RANGE_METERS  = 250
 local RADAR_ROAD_DRAW_LIMIT = 120
 local DIST_KM_THRESHOLD   = 1000   -- metres; above this shown in km
-local PLAYER_HP_WINDOW_W  = 520
-local PLAYER_HP_WINDOW_H  = 118
 local AUTOSAVE_PATH       = "/settings/jonesingMissions.autosave.json"
-
--- Player/body health placeholder.  This intentionally represents the player/unicycle
--- concept, NOT the vehicle condition.  It stays at 100 for now until the body damage
--- system is wired in.
-local PLAYER_BODY_MAX_HP  = 100
 
 -- ── State ──────────────────────────────────────────────────────────────────────
 local pulseTime         = 0
@@ -278,16 +272,8 @@ local bigBannerTimer    = 0
 local missionCompletedByType = {} -- runtime unlocks: only next tier for each type is visible
 local templateTiersReady = false
 local lastSimClock      = nil
-local playerBodyHp      = PLAYER_BODY_MAX_HP
 local missionStartHome  = nil
-local driverSeatHealthProbeTimer = 0
 local radarRoadPositions = {}
-local lastPlayerHealthSpeed = nil
-local playerHealthCrashCooldown = 0
-local playerHealthDebugText = "HP ready. No damage recorded."
-local playerHealthLastReason = "none"
-local playerHealthLastDamage = 0
-local playerHealthLastSpeedDrop = 0
 local getPlayerVehicle  = nil -- forward declaration used by helpers above the concrete function
 
 local function sanitizeMissionProgress(data)
@@ -309,7 +295,6 @@ local function saveAutosave(reason)
         reason = reason or "autosave",
         savedAt = os and os.time and os.time() or nil,
         missionCompletedByType = sanitizeMissionProgress(missionCompletedByType),
-        playerBodyHp = math.max(0, math.min(PLAYER_BODY_MAX_HP, tonumber(playerBodyHp) or PLAYER_BODY_MAX_HP)),
     }
 
     local ok, wrote = pcall(jsonWriteFile, AUTOSAVE_PATH, payload, true)
@@ -327,12 +312,10 @@ local function loadAutosave()
     local ok, data = pcall(jsonReadFile, AUTOSAVE_PATH)
     if not ok or type(data) ~= "table" then
         missionCompletedByType = {}
-        playerBodyHp = PLAYER_BODY_MAX_HP
         return false
     end
 
     missionCompletedByType = sanitizeMissionProgress(data.missionCompletedByType)
-    playerBodyHp = math.max(0, math.min(PLAYER_BODY_MAX_HP, tonumber(data.playerBodyHp) or PLAYER_BODY_MAX_HP))
     return true
 end
 
@@ -1073,6 +1056,7 @@ local function startChase(point, playerPos)
             end
         end
         mission.recycleTimer = 0
+        mission.chaseStoppedCooldown = CHASE_STOPPED_COOLDOWN
         forcePlayerFocus()
         armFocusReturn(1.5)
         notify("info",
@@ -1336,13 +1320,6 @@ local function startMission(point)
     targetLastPos     = nil
     targetStoppedSecs = 0
     targetSpeedTimer  = 0
-    playerBodyHp = PLAYER_BODY_MAX_HP
-    lastPlayerHealthSpeed = nil
-    playerHealthCrashCooldown = 0
-    playerHealthDebugText = "Mission start: HP reset to 100."
-    playerHealthLastReason = "mission_start_reset"
-    playerHealthLastDamage = 0
-    playerHealthLastSpeedDrop = 0
 
     mission = {
         point = point,
@@ -1690,53 +1667,6 @@ end
 
 local imguiColor
 
-local function getPlayerBodyHealthPercent()
-    -- Placeholder for the future walk/unicycle/body damage system. This is intentionally
-    -- NOT derived from the current vehicle.  Leave it pinned at 100% until body damage
-    -- callbacks are available.
-    playerBodyHp = math.max(0, math.min(PLAYER_BODY_MAX_HP, playerBodyHp or PLAYER_BODY_MAX_HP))
-    return playerBodyHp, (playerBodyHp / PLAYER_BODY_MAX_HP) * 100
-end
-
-local function drawPlayerHealthWidget()
-    if not im then return end
-    local hp, pct = getPlayerBodyHealthPercent()
-    local w, h = PLAYER_HP_WINDOW_W, PLAYER_HP_WINDOW_H
-    im.SetNextWindowSize(im.ImVec2(w, h), im.Cond_Always)
-    im.SetNextWindowPos(anchoredPos("topCenter", w, h, 24, 18), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.78)
-    local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings, im.WindowFlags_NoScrollbar)
-    if im.Begin("##jonesingPlayerHealth", nil, flags) then
-        if im.SetWindowFontScale then im.SetWindowFontScale(1.25) end
-        im.TextColored(im.ImVec4(0.95, 0.95, 0.95, 1.0), string.format(" PLAYER HP  %d / %d  (%.0f%%)", hp, PLAYER_BODY_MAX_HP, pct))
-        im.TextColored(im.ImVec4(0.72, 0.88, 1.0, 1.0), " " .. tostring(playerHealthDebugText or "No HP debug yet."))
-        if mission and wantedLevelForMission and wantedLevelForMission(mission.point.type) > 0 then
-            local bust = mission.playerImmobilizedTimer or 0
-            im.TextColored(im.ImVec4(1.0, 0.72, 0.45, 1.0), string.format(" Busted check: immobilized %.1f / %.1fs near police", bust, PLAYER_IMMOBILE_TIME))
-        end
-        local drawList = im.GetWindowDrawList and im.GetWindowDrawList()
-        local pos = im.GetWindowPos and im.GetWindowPos() or im.ImVec2(0, 0)
-        if drawList then
-            local x1, y1 = pos.x + 18, pos.y + 86
-            local x2, y2 = pos.x + w - 18, pos.y + 104
-            local fillX = x1 + (x2 - x1) * (pct / 100)
-            local bg = imguiColor(0.10, 0.10, 0.10, 0.95)
-            local edge = imguiColor(0.90, 0.90, 0.90, 0.85)
-            local fill = imguiColor(0.25, 1.00, 0.35, 1.00)
-            -- Draw background first, then green fill, then border. Full HP should look FULL, not empty.
-            pcall(function() drawList:AddRectFilled(im.ImVec2(x1, y1), im.ImVec2(x2, y2), bg, 4) end)
-            if fillX > x1 + 1 then
-                pcall(function() drawList:AddRectFilled(im.ImVec2(x1, y1), im.ImVec2(fillX, y2), fill, 4) end)
-            end
-            pcall(function() drawList:AddRect(im.ImVec2(x1, y1), im.ImVec2(x2, y2), edge, 4, 0, 1.5) end)
-        elseif im.ProgressBar then
-            -- BeamNG fallback when draw-list colored rectangles fail.
-            im.ProgressBar(pct / 100, im.ImVec2(w - 36, 18), string.format('%.0f%%', pct))
-        end
-    end
-    im.End()
-end
-
 local function drawLoaderOverlay()
     if not im or not loaderActive then return end
     im.SetNextWindowSize(im.ImVec2(520, 120), im.Cond_Always)
@@ -1783,6 +1713,17 @@ local function addRadarBlip(items, label, pos, color, playerPos)
     table.insert(items, { label = label, pos = pos, color = color or {1,1,1,1}, dist = playerPos:distance(pos) })
 end
 
+local function drawRadarGlyph(sx, sy, text, color)
+    if not im or not im.SetCursorScreenPos then return end
+    local r, g, b, a = color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 1
+    pcall(function()
+        im.SetCursorScreenPos(im.ImVec2(sx - 4, sy - 8))
+        im.TextColored(im.ImVec4(0.05, 0.05, 0.05, a), tostring(text or "*"))
+        im.SetCursorScreenPos(im.ImVec2(sx - 5, sy - 9))
+        im.TextColored(im.ImVec4(r, g, b, a), tostring(text or "*"))
+    end)
+end
+
 local function drawRadarPoint(drawList, cx, cy, px, py, radius, item)
     local r, g, b, a = item.color[1], item.color[2], item.color[3], item.color[4] or 1
     local edge = math.sqrt(px * px + py * py)
@@ -1792,20 +1733,31 @@ local function drawRadarPoint(drawList, cx, cy, px, py, radius, item)
     end
     local sx, sy = cx + px, cy + py
     local col = imguiColor(r, g, b, a)
+    local edgeCol = imguiColor(0.08, 0.08, 0.08, 0.95)
 
     -- Draw-list blips are pretty, but some BeamNG ImGui builds silently ignore a few
     -- draw-list calls. Also render a text glyph fallback at the same position.
     if drawList then
-        pcall(function() drawList:AddCircleFilled(im.ImVec2(sx, sy), 8.5, col, 16) end)
-        pcall(function() drawList:AddCircle(im.ImVec2(sx, sy), 10.5, imguiColor(1,1,1,0.95), 16, 2.0) end)
-        pcall(function() drawList:AddText(im.ImVec2(sx + 10, sy - 9), imguiColor(1,1,1,1), tostring(item.label or "*")) end)
+        pcall(function() drawList:AddCircleFilled(im.ImVec2(sx, sy), 12.0, edgeCol, 18) end)
+        pcall(function() drawList:AddCircleFilled(im.ImVec2(sx, sy), 10.0, col, 18) end)
+        pcall(function() drawList:AddCircle(im.ImVec2(sx, sy), 11.5, imguiColor(1,1,1,0.95), 18, 2.0) end)
+        pcall(function() drawList:AddText(im.ImVec2(sx - 4, sy - 8), imguiColor(0.05,0.05,0.05,1), tostring(item.label or "*")) end)
+        pcall(function() drawList:AddText(im.ImVec2(sx - 5, sy - 9), imguiColor(1,1,1,1), tostring(item.label or "*")) end)
+        pcall(function() drawList:AddCircle(im.ImVec2(sx, sy), 14.0, imguiColor(r, g, b, 0.35), 18, 1.5) end)
     end
-    if im and im.SetCursorScreenPos then
-        pcall(function()
-            im.SetCursorScreenPos(im.ImVec2(sx - 5, sy - 8))
-            im.TextColored(im.ImVec4(r, g, b, a), tostring(item.label or "*"))
-        end)
-    end
+    drawRadarGlyph(sx, sy, item.label or "*", { r, g, b, a })
+end
+
+local function drawRadarPlayerGlyph(cx, cy)
+    if not im or not im.SetCursorScreenPos then return end
+    pcall(function()
+        im.SetCursorScreenPos(im.ImVec2(cx - 8, cy - 11))
+        im.TextColored(im.ImVec4(0.05, 0.05, 0.05, 1.0), "^")
+        im.SetCursorScreenPos(im.ImVec2(cx - 9, cy - 12))
+        im.TextColored(im.ImVec4(0.20, 1.0, 0.30, 1.0), "^")
+        im.SetCursorScreenPos(im.ImVec2(cx - 11, cy + 10))
+        im.TextColored(im.ImVec4(0.20, 1.0, 0.30, 1.0), "YOU")
+    end)
 end
 
 local function getCameraForwardVectorFallback()
@@ -1838,7 +1790,7 @@ local function drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading
         local dist = math.sqrt(dx * dx + dy * dy)
         if dist < RADAR_RANGE_METERS then
             local ang = math.atan2(dy, dx) - heading
-            local px = math.sin(ang) * dist * scale
+            local px = -math.sin(ang) * dist * scale
             local py = -math.cos(ang) * dist * scale
             -- tiny road-node square; cheap and reliable. This makes nearby roads visible even if
             -- graph edge topology differs between maps.
@@ -1869,8 +1821,13 @@ local function drawPlayerRadarArrow(drawList, cx, cy, radarHeading)
     end
     local pcol = imguiColor(0.20, 1.0, 0.30, 1.0)
     pcall(function() drawList:AddTriangleFilled(rotPoint(0, -15), rotPoint(-9, 10), rotPoint(9, 10), pcol) end)
+    pcall(function() drawList:AddCircleFilled(im.ImVec2(cx, cy), 5.5, imguiColor(0.05, 0.10, 0.05, 0.95), 18) end)
     pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), 14, imguiColor(1,1,1,0.95), 20, 2.0) end)
     pcall(function() drawList:AddText(im.ImVec2(cx - 24, cy + 18), imguiColor(0.70,1.0,0.70,1.0), 'YOU') end)
+end
+
+local function compassFromAngle(angle)
+    return compassDir(math.cos(angle), math.sin(angle))
 end
 
 local function drawRadar(playerPos)
@@ -1878,7 +1835,7 @@ local function drawRadar(playerPos)
     local w, h = RADAR_WINDOW_SIZE, RADAR_WINDOW_SIZE
     im.SetNextWindowSize(im.ImVec2(w, h), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("rightMiddle", w, h, 28, 24), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.72)
+    im.SetNextWindowBgAlpha(0.90)
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings, im.WindowFlags_NoScrollbar)
     if im.Begin("##jonesingRadar", nil, flags) then
         local drawList = im.GetWindowDrawList and im.GetWindowDrawList()
@@ -1888,23 +1845,28 @@ local function drawRadar(playerPos)
         local radius = (w * 0.5) - 28
 
         if drawList then
-            local bg = imguiColor(0.02, 0.03, 0.04, 0.88)
-            local ring = imguiColor(0.65, 0.85, 1.0, 0.85)
-            local soft = imguiColor(0.65, 0.85, 1.0, 0.22)
+            local bg = imguiColor(0.02, 0.03, 0.04, 0.96)
+            local ring = imguiColor(0.65, 0.85, 1.0, 0.95)
+            local soft = imguiColor(0.65, 0.85, 1.0, 0.40)
             pcall(function() drawList:AddCircleFilled(im.ImVec2(cx, cy), radius + 8, bg, 64) end)
-            pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), radius, ring, 64, 2.0) end)
-            pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), radius * 0.50, soft, 48, 1.0) end)
-            pcall(function() drawList:AddLine(im.ImVec2(cx - radius, cy), im.ImVec2(cx + radius, cy), soft, 1.0) end)
-            pcall(function() drawList:AddLine(im.ImVec2(cx, cy - radius), im.ImVec2(cx, cy + radius), soft, 1.0) end)
+            pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), radius, ring, 64, 2.5) end)
+            pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), radius * 0.50, soft, 48, 1.5) end)
+            pcall(function() drawList:AddLine(im.ImVec2(cx - radius, cy), im.ImVec2(cx + radius, cy), soft, 1.5) end)
+            pcall(function() drawList:AddLine(im.ImVec2(cx, cy - radius), im.ImVec2(cx, cy + radius), soft, 1.5) end)
         end
 
         local camDir = getCameraForwardVectorFallback()
         local heading = math.atan2(camDir.y, camDir.x)
+        local topDir = compassFromAngle(heading)
+        local rightDir = compassFromAngle(heading - math.pi * 0.5)
+        local bottomDir = compassFromAngle(heading + math.pi)
+        local leftDir = compassFromAngle(heading + math.pi * 0.5)
         if drawList then
             drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading)
             -- Player marker points in the CAR'S facing direction, while the radar itself remains camera-relative.
             drawPlayerRadarArrow(drawList, cx, cy, heading)
         end
+        drawRadarPlayerGlyph(cx, cy)
 
         local items = {}
         if mission then
@@ -1928,7 +1890,7 @@ local function drawRadar(playerPos)
         else
             for _, mp in ipairs(missionPoints) do
                 if (missionCooldowns[mp.name] or 0) <= 0 then
-                    local _, tc = typeStyle(mp.type)
+                    local tag = select(1, typeStyle(mp.type)) or "M"
                     -- Use simple colors by mission type; ImVec4 introspection is unreliable in BeamNG Lua.
                     local c = {0.9, 0.9, 0.9, 1.0}
                     if mp.type == CHASE then c = {1.0,0.45,0.10,1.0}
@@ -1938,7 +1900,7 @@ local function drawRadar(playerPos)
                     elseif mp.type == REACH then c = {0.85,0.85,1.0,1.0}
                     elseif mp.type == RALLY then c = {1.0,0.85,0.0,1.0}
                     elseif mp.type == CRUISE then c = {0.45,0.85,0.45,1.0} end
-                    addRadarBlip(items, "M", mp.pos, c, playerPos)
+                    addRadarBlip(items, tag, mp.pos, c, playerPos)
                 end
             end
         end
@@ -1951,7 +1913,7 @@ local function drawRadar(playerPos)
             -- Rotate world coordinates so the player's forward direction is radar-up.
             local ang = math.atan2(dy, dx) - heading
             local dist = math.min(item.dist or math.sqrt(dx*dx+dy*dy), RADAR_RANGE_METERS)
-            local px = math.sin(ang) * dist * scale
+            local px = -math.sin(ang) * dist * scale
             local py = -math.cos(ang) * dist * scale
             if drawList then drawRadarPoint(drawList, cx, cy, px, py, radius, item) end
         end
@@ -1959,6 +1921,14 @@ local function drawRadar(playerPos)
         if im.SetWindowFontScale then im.SetWindowFontScale(1.05) end
         im.SetCursorPos(im.ImVec2(16, 10))
         im.TextColored(im.ImVec4(0.70, 0.90, 1.0, 1.0), "RADAR")
+        im.SetCursorPos(im.ImVec2(w * 0.50 - 6, 26))
+        im.TextColored(im.ImVec4(0.65, 0.85, 1.0, 0.95), topDir)
+        im.SetCursorPos(im.ImVec2(w * 0.50 - 5, h - 42))
+        im.TextColored(im.ImVec4(0.65, 0.85, 1.0, 0.70), bottomDir)
+        im.SetCursorPos(im.ImVec2(24, h * 0.53 - 9))
+        im.TextColored(im.ImVec4(0.65, 0.85, 1.0, 0.70), leftDir)
+        im.SetCursorPos(im.ImVec2(w - 32, h * 0.53 - 9))
+        im.TextColored(im.ImVec4(0.65, 0.85, 1.0, 0.70), rightDir)
         im.SetCursorPos(im.ImVec2(16, h - 28))
         im.TextColored(im.ImVec4(0.78, 0.78, 0.78, 1.0), string.format("Range %dm  Blips:%d", RADAR_RANGE_METERS, #items))
     end
@@ -2007,7 +1977,6 @@ local function drawJonesingUI()
     -- Hide all custom UI while paused/menu is open. This keeps the pause/menu screen clean.
     if isGamePaused() then return end
     local playerPos = getPlayerPos()
-    drawPlayerHealthWidget()
     drawHUD()
     drawRadar(playerPos)
     drawBottomBanner(playerPos)
@@ -2055,6 +2024,13 @@ end
 -- Tracks the chase target's speed by comparing positions between frames.
 -- Updates targetStoppedSecs (accumulated time the target has been near-stationary).
 local function tickChaseTargetSpeed(dt)
+    if mission and (mission.chaseStoppedCooldown or 0) > 0 then
+        mission.chaseStoppedCooldown = math.max(0, (mission.chaseStoppedCooldown or 0) - dt)
+        targetLastPos = nil
+        targetStoppedSecs = 0
+        return
+    end
+
     targetSpeedTimer = targetSpeedTimer + dt
     if targetSpeedTimer < CHASE_SPEED_INTERVAL then return end
     targetSpeedTimer = 0
@@ -2225,41 +2201,6 @@ local function tickPlayerDamage(dt)
     return false
 end
 
-
-local function tickPlayerBodyHealth(dt)
-    dt = dt or 0
-    playerHealthCrashCooldown = math.max(0, (playerHealthCrashCooldown or 0) - dt)
-    local pv = getPlayerVehicle and getPlayerVehicle()
-
-    if pv then
-        local speed = getVehicleSpeed(pv)
-        if speed then
-            if lastPlayerHealthSpeed and playerHealthCrashCooldown <= 0 then
-                local drop = lastPlayerHealthSpeed - speed
-                if drop > 20 then
-                    local dmg = math.floor((drop - 18) * 1.15)
-                    if dmg > 0 then
-                        playerBodyHp = math.max(0, (playerBodyHp or PLAYER_BODY_MAX_HP) - dmg)
-                        playerHealthCrashCooldown = 1.0
-                        playerHealthLastReason = "speed_drop"
-                        playerHealthLastDamage = dmg
-                        playerHealthLastSpeedDrop = drop
-                        playerHealthDebugText = string.format("Last hit: -%d HP from %.1f m/s speed drop.", dmg, drop)
-                    end
-                end
-            end
-            lastPlayerHealthSpeed = speed
-        end
-    else
-        lastPlayerHealthSpeed = nil
-        playerHealthDebugText = "No player vehicle found for HP tracking."
-    end
-
-    driverSeatHealthProbeTimer = (driverSeatHealthProbeTimer or 0) + dt
-    if driverSeatHealthProbeTimer < DRIVER_SEAT_CHECK_INTERVAL then return end
-    driverSeatHealthProbeTimer = 0
-    if pv then pv:queueLuaCommand(makeDriverSeatHealthProbeCmd()) end
-end
 
 local function tickPoliceBustedFail(playerPos, dt)
     if not mission or not playerPos then return false end
@@ -2506,7 +2447,6 @@ local function onUpdate(dt, dtSim)
         if wantedLevelForMission and wantedLevelForMission(mtype) > 0 and mtype ~= ESCAPE then
             tickTeleportPolice(playerPos, dt)
         end
-        tickPlayerBodyHealth(dt)
         if tickPoliceBustedFail(playerPos, dt) then
             cleanupMission(false, "Busted — immobilized with police close by!")
             return
@@ -2639,12 +2579,7 @@ end
 
 -- ── Extension hooks ────────────────────────────────────────────────────────────
 local function onExtensionLoaded()
-    playerBodyHp = PLAYER_BODY_MAX_HP
-    if loadAutosave() then
-        playerHealthDebugText = string.format("Autosave loaded: HP restored to %d.", playerBodyHp)
-    else
-        playerHealthDebugText = "No autosave found: HP initialized to 100."
-    end
+    loadAutosave()
     initialized = false
     initTimer = 0
     log("I", "jonesingMissions",
@@ -2678,31 +2613,16 @@ function M.reportPlayerWrecked()
     playerWrecked = true
 end
 
--- Future body/unicycle damage callbacks can call this. For now it remains 100.
 function M.setPlayerBodyHealth(percent)
-    local n = tonumber(percent) or PLAYER_BODY_MAX_HP
-    playerBodyHp = math.max(0, math.min(PLAYER_BODY_MAX_HP, n))
-    saveAutosave("body_health_set")
+    return false
 end
 
 function M.resetPlayerBodyHealth()
-    playerBodyHp = PLAYER_BODY_MAX_HP
-    saveAutosave("body_health_reset")
+    return false
 end
 
 function M.reportDriverSeatCrush(severity)
-    -- Best-effort body damage. Severity is expected around 0..1 but is clamped.
-    local sev = math.max(0, math.min(1, tonumber(severity) or 0))
-    if sev <= 0 then return end
-    -- Convert severity to incremental damage so HP visibly drops in big crashes.
-    local dmg = math.floor(sev * 18)
-    if dmg > 0 then
-        playerBodyHp = math.max(0, (playerBodyHp or PLAYER_BODY_MAX_HP) - dmg)
-        playerHealthLastReason = 'driver_seat_crush'
-        playerHealthLastDamage = dmg
-        playerHealthDebugText = string.format('Last hit: -%d HP from driver/seat crush severity %.2f.', dmg, sev)
-        saveAutosave("driver_seat_crush")
-    end
+    return false
 end
 
 function M.saveAutosave()
