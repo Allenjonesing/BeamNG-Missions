@@ -34,6 +34,7 @@ local FOLLOW = "follow"
 local ENDURE = "endure"
 local REACH  = "reach"
 local RALLY  = "rally"
+local RACE   = "race"
 local CRUISE = "cruise"
 
 -- ── Mission templates ──────────────────────────────────────────────────────────
@@ -139,6 +140,14 @@ local missionTemplates = {
         fallbackDest  = vec3( -200,  200, 22),
     },
     {
+        name          = "Street Kings",
+        type          = RACE,
+        triggerRadius = 12,
+        color         = { r = 1.0, g = 0.35, b = 0.15, a = 0.70 },
+        waypointCount = 5,
+        fallbackPos   = vec3(  320, -120, 24),
+    },
+    {
         name          = "Cross Country",
         type          = CRUISE,
         triggerRadius = 12,
@@ -155,11 +164,12 @@ local ESCAPE_TIME_LIMIT     = 120    -- seconds before ESCAPE mission fails
 local MISSION_COOLDOWN      = 10     -- seconds before the same marker can re-trigger
 local ESCAPE_MIN_DISTANCE   = 500    -- metres: all police beyond this = escaped (ESCAPE win)
 local CHASE_DAMAGE_THRESH   = 0.50   -- damage fraction that counts as "destroyed"
-local CHASE_ESCAPE_DISTANCE = 200    -- metres: target beyond this = got away (CHASE fail)
-local CHASE_SPAWN_OFFSET    = 10     -- metres ahead of player to spawn the target
+local CHASE_ESCAPE_DISTANCE = 300    -- metres: target beyond this = got away (CHASE fail)
+local CHASE_SPAWN_OFFSET    = 50     -- metres ahead of player to spawn the target
 local CHASE_TARGET_MODEL    = "etk800"
-local CHASE_STOPPED_SPEED   = 5.0    -- m/s: below this the target is considered stopped
-local CHASE_STOPPED_COOLDOWN = 5.0   -- seconds after spawn before stopped-time starts counting
+local CHASE_STOPPED_SPEED   = 3.0    -- m/s: below this the target is considered stopped
+local CHASE_STOPPED_COOLDOWN = 10.0   -- seconds after spawn before stopped-time starts counting
+local CHASE_STOPPED_NEAR_DISTANCE = 15.0 -- metres: player must be this close before immobilization counts
 local CHASE_STOPPED_TIME    = 5.0    -- seconds: target stopped this long = destroyed / immobilized
 local CHASE_SPEED_INTERVAL  = 0.5    -- seconds between speed checks
 local POLICE_SPAWN_RADIUS   = { min = 100, max = 200 }
@@ -181,19 +191,19 @@ local POLICE_VARIANTS = {
     { model = "etk800",   config = "vehicles/etk800/854_police_A_alt.pc",      label = "ETK 854 Police Alt" },
 }
 -- FOLLOW mission tuning
-local FOLLOW_SPAWN_DIST     = 5      -- metres: target spawns right next to player for identification
+local FOLLOW_SPAWN_DIST     = 10      -- metres: target spawns right next to player for identification
 local FOLLOW_MIN_DIST       = 20     -- metres: too close = out-of-range
-local FOLLOW_MAX_DIST       = 150    -- metres: too far  = out-of-range
+local FOLLOW_MAX_DIST       = 100    -- metres: too far  = out-of-range
 local FOLLOW_GRACE          = 10.0   -- seconds the player can be out-of-range before failing
 local FOLLOW_IMMUNITY       = 20.0   -- seconds at mission start before "too close" detection activates
-local FOLLOW_DURATION       = 300     -- seconds of sustained in-range following = success
+local FOLLOW_DURATION       = 120     -- seconds of sustained in-range following = success
 local FOLLOW_DAMAGE_THRESH  = 0.10   -- damage to followed vehicle that triggers failure
 local FOLLOW_DMG_INTERVAL   = 1.0    -- seconds between VE-side damage re-checks
 
 -- ENDURE mission tuning
-local ENDURE_TIME_LIMIT        = 90     -- seconds to survive recycling police = success
+local ENDURE_TIME_LIMIT        = 120     -- seconds to survive recycling police = success
 local ENDURE_RECYCLE_DIST      = 300    -- police beyond this from the player are teleported back
-local POLICE_TELEPORT_RADIUS   = { min = 520, max = 780 }   -- far-ahead recycle placement; grace prevents instant re-recycle
+local POLICE_TELEPORT_RADIUS   = { min = 200, max = 300 }   -- far-ahead recycle placement; grace prevents instant re-recycle
 local POLICE_TELEPORT_INTERVAL = 2.5    -- seconds between recycle-teleport checks
 
 -- REACH mission tuning
@@ -207,6 +217,20 @@ local RALLY_BONUS_TIME        = 30      -- seconds added per checkpoint reached
 local RALLY_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
 local RALLY_WAYPOINT_SPREAD   = 400     -- metres: max distance between successive waypoints
 
+-- RACE mission tuning (AI racers + ordered checkpoints, no timer)
+local RACE_CHECKPOINT_COUNT   = 5       -- total checkpoints in the street race
+local RACE_CHECKPOINT_RADIUS  = 25      -- metres: arriving within this of a waypoint = hit
+local RACE_RACER_COUNT        = 3       -- number of AI racers spawned for the event
+local RACE_SPAWN_RADIUS       = { min = 12, max = 40 }
+local RACE_VARIANTS = {
+    { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
+    { model = "sunburst", label = "Sunburst",         color = "0.95 0.80 0.15 1" },
+    { model = "200bx",    label = "200BX",            color = "0.15 0.55 0.95 1" },
+    { model = "sbr",      label = "SBR4",             color = "0.95 0.35 0.15 1" },
+    { model = "covet",    label = "Covet",            color = "0.20 0.85 0.35 1" },
+    { model = "bolide",   label = "Civetta Bolide",   color = "0.95 0.15 0.15 1" },
+}
+
 -- CRUISE mission tuning (single far destination, no police, player chooses route)
 local CRUISE_TIME_LIMIT       = 300     -- seconds to reach the destination
 local CRUISE_RADIUS           = 25      -- metres: arriving within this of destPos = success
@@ -216,11 +240,11 @@ local PLAYER_DAMAGE_THRESH      = 0.70   -- player vehicle wrecked at this damag
 local PLAYER_DMG_CHECK_INTERVAL = 1.0    -- seconds between VE-side player damage checks
 local DRIVER_SEAT_CHECK_INTERVAL = 0.85   -- seconds between player/body/driver-seat health probes
 local WANTED_RECYCLE_INTERVAL    = 2.0    -- seconds between wanted police recycle checks
-local WANTED_RECYCLE_DISTANCE    = 280    -- wanted police farther than this are recycled ahead
+local WANTED_RECYCLE_DISTANCE    = 300    -- wanted police farther than this are recycled ahead
 local POLICE_RECYCLE_GRACE       = 10.0   -- seconds after spawn/teleport before a police unit may recycle again
 local PLAYER_IMMOBILE_SPEED      = 2.0    -- m/s; below this counts as immobilized/stuck
-local PLAYER_IMMOBILE_TIME       = 6.0    -- seconds immobilized near police before failing
-local PLAYER_BUSTED_DISTANCE     = 55     -- metres; closest police must be within this to bust immobilized player
+local PLAYER_IMMOBILE_TIME       = 10.0    -- seconds immobilized near police before failing
+local PLAYER_BUSTED_DISTANCE     = 10     -- metres; closest police must be within this to bust immobilized player
 
 -- Beacon visual constants — dense pillar so spheres overlap and form a solid column
 local BEACON_BELOW        = 3      -- metres below marker Z — avoid burying pillars below road surfaces
@@ -274,6 +298,7 @@ local templateTiersReady = false
 local lastSimClock      = nil
 local missionStartHome  = nil
 local radarRoadPositions = {}
+local radarRoadSegments = {}
 local getPlayerVehicle  = nil -- forward declaration used by helpers above the concrete function
 
 local function sanitizeMissionProgress(data)
@@ -317,6 +342,13 @@ local function loadAutosave()
 
     missionCompletedByType = sanitizeMissionProgress(data.missionCompletedByType)
     return true
+end
+
+local function asVec3(pos)
+    if not pos or type(pos.x) ~= "number" or type(pos.y) ~= "number" or type(pos.z) ~= "number" then
+        return nil
+    end
+    return vec3(pos.x, pos.y, pos.z)
 end
 
 
@@ -380,11 +412,40 @@ local function findRandomRoadPositions(count, minSpacing)
     end
     allPositions = filtered
 
-    -- Cache the raw road/navigation node positions for the radar road overlay.
-    -- This is only a light-weight approximation of BeamNG's map, but it makes the radar useful.
+    -- Cache raw road/navigation data for the radar overlay.
     radarRoadPositions = {}
     for i, p in ipairs(allPositions) do
         radarRoadPositions[i] = p
+    end
+
+    radarRoadSegments = {}
+    if type(gp.graph) == "table" then
+        local seen = {}
+        for fromNode, links in pairs(gp.graph) do
+            if type(links) == "table" then
+                for toNode, linkData in pairs(links) do
+                    local keyA = tostring(fromNode)
+                    local keyB = tostring(toNode)
+                    local edgeKey = (keyA < keyB) and (keyA .. ":" .. keyB) or (keyB .. ":" .. keyA)
+                    if not seen[edgeKey] then
+                        local fromPos = nil
+                        local toPos = nil
+
+                        if type(linkData) == "table" then
+                            fromPos = asVec3(linkData.inPos)
+                            toPos = asVec3(linkData.outPos)
+                        end
+                        if not fromPos and type(gp.positions) == "table" then fromPos = asVec3(gp.positions[fromNode]) end
+                        if not toPos and type(gp.positions) == "table" then toPos = asVec3(gp.positions[toNode]) end
+
+                        if fromPos and toPos and fromPos:distance(toPos) <= 120 then
+                            table.insert(radarRoadSegments, { a = fromPos, b = toPos })
+                            seen[edgeKey] = true
+                        end
+                    end
+                end
+            end
+        end
     end
 
     if #allPositions < count then return nil end
@@ -475,6 +536,37 @@ local function snapToGround(pos, refPos)
     end
     if not best then best = pos.z end
     return vec3(x, y, best + 0.75)
+end
+
+local function findRoadSpawnPositionNear(origin, minDist, maxDist)
+    if not origin then return nil end
+
+    local candidates = {}
+    local pool = radarRoadPositions
+
+    if not pool or #pool == 0 then
+        local ok, gp = pcall(function() return map and map.getGraphpath and map.getGraphpath() end)
+        if ok and gp and type(gp.positions) == "table" then
+            pool = {}
+            for _, pos in pairs(gp.positions) do
+                if pos and type(pos.x) == "number" and type(pos.y) == "number" and type(pos.z) == "number" then
+                    table.insert(pool, vec3(pos.x, pos.y, pos.z))
+                end
+            end
+        end
+    end
+
+    if not pool or #pool == 0 then return nil end
+
+    for _, pos in ipairs(pool) do
+        local dist = origin:distance(pos)
+        if dist >= minDist and dist <= maxDist then
+            table.insert(candidates, pos)
+        end
+    end
+
+    if #candidates == 0 then return nil end
+    return snapToGround(candidates[math.random(1, #candidates)], origin)
 end
 
 -- Screen-size helpers.  Never hardcode 1920x1080 positions; BeamNG can run at any resolution.
@@ -889,8 +981,14 @@ local function buildSpawnOptions(choice, spawnPos)
         rot = quat(0, 0, 0, 1),
         autoEnterVehicle = false,
     }
+    if choice and choice.model and choice.model ~= "" then
+        opts.model = choice.model
+    end
     if choice and choice.config and choice.config ~= "" then
         opts.config = choice.config
+    end
+    if choice and choice.color and choice.color ~= "" then
+        opts.color = choice.color
     end
     return opts
 end
@@ -905,12 +1003,13 @@ local function spawnPoliceVehicle(playerPos, playerID)
 
     local angle = math.random() * 2 * math.pi
     local dist = math.random(POLICE_SPAWN_RADIUS.min, POLICE_SPAWN_RADIUS.max)
-
-    local spawnPos = vec3(
+    local fallbackPos = vec3(
         playerPos.x + math.cos(angle) * dist,
         playerPos.y + math.sin(angle) * dist,
         playerPos.z + 1.5
     )
+    local spawnPos = findRoadSpawnPositionNear(playerPos, POLICE_SPAWN_RADIUS.min, POLICE_SPAWN_RADIUS.max)
+        or snapToGround(fallbackPos, playerPos)
 
     -- Try random variants rather than trusting one config path.
     -- This is important because police .pc names vary between BeamNG versions and mods.
@@ -1028,7 +1127,9 @@ local function startChase(point, playerPos)
     if not playerID then return end
 
     local offset   = vec3(math.random(-40, 40), CHASE_SPAWN_OFFSET, 0)
-    local spawnPos = vec3(playerPos.x + offset.x, playerPos.y + offset.y, playerPos.z)
+    local fallbackPos = vec3(playerPos.x + offset.x, playerPos.y + offset.y, playerPos.z)
+    local spawnPos = findRoadSpawnPositionNear(playerPos, math.max(10, CHASE_SPAWN_OFFSET), math.max(60, CHASE_SPAWN_OFFSET + 70))
+        or snapToGround(fallbackPos, playerPos)
 
     -- core_vehicles.spawnNewVehicle returns the vehicle object (userdata), not a number.
     local targetVeh = core_vehicles.spawnNewVehicle(CHASE_TARGET_MODEL, {
@@ -1110,11 +1211,13 @@ local function startFollow(point, playerPos)
 
     -- Spawn the target vehicle very close (~5 m) so the player can identify it
     local angle    = math.random() * 2 * math.pi
-    local spawnPos = vec3(
+    local fallbackPos = vec3(
         playerPos.x + math.cos(angle) * FOLLOW_SPAWN_DIST,
         playerPos.y + math.sin(angle) * FOLLOW_SPAWN_DIST,
         playerPos.z
     )
+    local spawnPos = findRoadSpawnPositionNear(playerPos, math.max(5, FOLLOW_SPAWN_DIST), math.max(40, FOLLOW_SPAWN_DIST + 35))
+        or snapToGround(fallbackPos, playerPos)
 
     local targetVeh = core_vehicles.spawnNewVehicle("etk800", {
         pos   = spawnPos,
@@ -1284,6 +1387,78 @@ local function startCruise(point, playerPos)
             CRUISE_TIME_LIMIT))
 end
 
+local function buildRaceAiCommand(waypoints)
+    local cmd = { "local wpTargetList = {}" }
+    for i, waypoint in ipairs(waypoints or {}) do
+        if waypoint then
+            cmd[#cmd + 1] = string.format(
+                "wpTargetList[%d] = vec3({x=%0.6f,y=%0.6f,z=%0.6f})",
+                i, waypoint.x, waypoint.y, waypoint.z)
+        end
+    end
+    cmd[#cmd + 1] = "ai.driveUsingPath({wpTargetList = wpTargetList, noOfLaps = 1, aggression = 0.9, avoidCars = 'on'})"
+    cmd[#cmd + 1] = "ai.setRacing(true)"
+    cmd[#cmd + 1] = "ai.setParameters({turnForceCoef = 4, awarenessForceCoef = 0.15})"
+    return table.concat(cmd, "; ")
+end
+
+local function configureRaceAI(veh, waypoints)
+    if not veh or not waypoints or #waypoints == 0 then return end
+    veh:queueLuaCommand(buildRaceAiCommand(waypoints))
+end
+
+local function spawnRaceVehicle(playerPos)
+    if not RACE_VARIANTS or #RACE_VARIANTS == 0 then
+        log("E", "jonesingMissions", "RACE_VARIANTS is missing or empty.")
+        return nil
+    end
+
+    local spawnPos = findRoadSpawnPositionNear(playerPos, RACE_SPAWN_RADIUS.min, RACE_SPAWN_RADIUS.max)
+    if not spawnPos then return nil end
+    local choice = RACE_VARIANTS[math.random(1, #RACE_VARIANTS)]
+    if not choice or not choice.model then return nil end
+
+    log("I", "jonesingMissions",
+        string.format("Race spawn: %s model=%s config=%s",
+            tostring(choice.label or "?"),
+            tostring(choice.model),
+            tostring(choice.config)))
+
+    return core_vehicles.spawnNewVehicle(choice.model, buildSpawnOptions(choice, spawnPos))
+end
+
+local function startRace(point, playerPos)
+    local playerVeh = getPlayerVehicle()
+    if not playerVeh then return end
+
+    local waypointCount = point.waypointCount or RACE_CHECKPOINT_COUNT
+    mission.rallyWaypoints = generateRallyWaypoints(playerPos, waypointCount)
+    mission.rallyCurrentIdx = 1
+    mission.raceRacers = {}
+    mission.raceFinishCount = 0
+
+    for i = 1, RACE_RACER_COUNT do
+        local veh = spawnRaceVehicle(playerPos)
+        if veh then
+            local vid = veh:getID()
+            addSpawnedVehicle(vid, "racer")
+            mission.raceRacers[vid] = { idx = 1, finished = false }
+            configureRaceAI(veh, mission.rallyWaypoints)
+        end
+    end
+
+    forcePlayerFocus()
+    armFocusReturn(1.5)
+    notify("info",
+        "MISSION: " .. missionDisplayName(point),
+        string.format(
+            "A %d-checkpoint street race is on! %d rival%s are heading for the checkpoints in order. " ..
+            "No timer: first to the final checkpoint wins.",
+            waypointCount,
+            tableSize(mission.raceRacers or {}),
+            tableSize(mission.raceRacers or {}) == 1 and "" or "s"))
+end
+
 -- ── Mission lifecycle ──────────────────────────────────────────────────────────
 local function runMissionStart(point, playerPos)
     stopPlayerVehicle()
@@ -1293,6 +1468,7 @@ local function runMissionStart(point, playerPos)
     elseif point.type == ENDURE then startEndure(point, playerPos)
     elseif point.type == REACH  then startReach (point, playerPos)
     elseif point.type == RALLY  then startRally (point, playerPos)
+    elseif point.type == RACE   then startRace  (point, playerPos)
     elseif point.type == CRUISE then startCruise(point, playerPos)
     end
 
@@ -1429,6 +1605,7 @@ local function typeStyle(mtype)
     if mtype == ENDURE then return "N", im.ImVec4(0.75, 0.20, 1.0,  1.0) end
     if mtype == REACH  then return "R", im.ImVec4(0.85, 0.85, 1.0,  1.0) end
     if mtype == RALLY  then return "Y", im.ImVec4(1.0,  0.85, 0.0,  1.0) end
+    if mtype == RACE   then return "S", im.ImVec4(1.0,  0.35, 0.15, 1.0) end
     if mtype == CRUISE then return "D", im.ImVec4(0.45, 0.85, 0.45, 1.0) end
     return "?", im.ImVec4(1.0, 1.0, 1.0, 1.0)
 end
@@ -1484,6 +1661,29 @@ local function getClosestPoliceInfo(playerPos)
     return best
 end
 
+local function getClosestRacerInfo(playerPos)
+    if not playerPos then return nil end
+    local best = nil
+    for _, vd in ipairs(spawnedVehicles) do
+        if vd.role == "racer" then
+            local v = be:getObjectByID(vd.id)
+            if v then
+                local pos = v:getPosition()
+                local dist = playerPos:distance(pos)
+                if not best or dist < best.dist then
+                    best = {
+                        vehicle = v,
+                        pos = pos,
+                        dist = dist,
+                        dir = compassDir(pos.x - playerPos.x, pos.y - playerPos.y),
+                    }
+                end
+            end
+        end
+    end
+    return best
+end
+
 wantedLevelForMission = function(mtype)
     if mtype == CHASE then return 2 end
     if mtype == ESCAPE then return 3 end
@@ -1507,6 +1707,7 @@ local function missionInstruction(mtype)
     if mtype == ENDURE then return "Survive until the timer reaches zero." end
     if mtype == REACH then return "Reach the destination before time runs out." end
     if mtype == RALLY then return "Hit each checkpoint before the timer expires." end
+    if mtype == RACE then return "Beat the AI racers to the final checkpoint." end
     if mtype == CRUISE then return "Drive to the destination your own way." end
     return "Complete the mission objective."
 end
@@ -1623,6 +1824,20 @@ local function drawHUD()
                         string.format("  Next CP: %s %s", wDir, formatMeters(wDist)))
                 end
                 im.TextColored(im.ImVec4(1.0, 0.4, 0.4, 1.0), string.format("  Time left: %d s", tLeft))
+
+            elseif mtype == RACE then
+                local idx   = mission.rallyCurrentIdx or 1
+                local total = mission.rallyWaypoints and #mission.rallyWaypoints or 0
+                local closest = getClosestRacerInfo(playerPos)
+                im.TextColored(im.ImVec4(1.0, 0.45, 0.20, 1.0), string.format("  Checkpoint: %d / %d", idx, total))
+                if mission.rallyWaypoints and idx <= total then
+                    local wp = mission.rallyWaypoints[idx]
+                    local wDist = playerPos:distance(wp)
+                    local wDir = compassDir(wp.x - playerPos.x, wp.y - playerPos.y)
+                    im.TextColored(im.ImVec4(1.0, 0.45, 0.20, 1.0), string.format("  Next CP: %s %s", wDir, formatMeters(wDist)))
+                end
+                im.TextColored(im.ImVec4(0.95, 0.85, 0.85, 1.0), string.format("  Rivals: %d", tableSize(mission.raceRacers or {})))
+                im.TextColored(im.ImVec4(0.95, 0.85, 0.85, 1.0), string.format("  Closest rival: %s %s", closest and closest.dir or "??", closest and formatMeters(closest.dist) or "none"))
 
             elseif mtype == CRUISE then
                 local rem = math.max(0, math.ceil(CRUISE_TIME_LIMIT - mission.timer))
@@ -1779,10 +1994,36 @@ local function getCameraForwardVectorFallback()
 end
 
 local function drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading)
-    if not drawList or not radarRoadPositions or #radarRoadPositions == 0 or not playerPos then return end
-    local roadCol = imguiColor(0.55, 0.62, 0.68, 0.32)
+    if not drawList or not playerPos then return end
+    local roadCol = imguiColor(0.55, 0.62, 0.68, 0.55)
     local scale = radius / RADAR_RANGE_METERS
     local drawn = 0
+    if radarRoadSegments and #radarRoadSegments > 0 then
+        for _, seg in ipairs(radarRoadSegments) do
+            if drawn >= RADAR_ROAD_DRAW_LIMIT then break end
+            local adx = seg.a.x - playerPos.x
+            local ady = seg.a.y - playerPos.y
+            local bdx = seg.b.x - playerPos.x
+            local bdy = seg.b.y - playerPos.y
+            local adist = math.sqrt(adx * adx + ady * ady)
+            local bdist = math.sqrt(bdx * bdx + bdy * bdy)
+            if adist < RADAR_RANGE_METERS or bdist < RADAR_RANGE_METERS then
+                local aang = math.atan2(ady, adx) - heading
+                local bang = math.atan2(bdy, bdx) - heading
+                local apx = -math.sin(aang) * math.min(adist, RADAR_RANGE_METERS) * scale
+                local apy = -math.cos(aang) * math.min(adist, RADAR_RANGE_METERS) * scale
+                local bpx = -math.sin(bang) * math.min(bdist, RADAR_RANGE_METERS) * scale
+                local bpy = -math.cos(bang) * math.min(bdist, RADAR_RANGE_METERS) * scale
+                pcall(function()
+                    drawList:AddLine(im.ImVec2(cx + apx, cy + apy), im.ImVec2(cx + bpx, cy + bpy), roadCol, 2.0)
+                end)
+                drawn = drawn + 1
+            end
+        end
+        return
+    end
+
+    if not radarRoadPositions or #radarRoadPositions == 0 then return end
     for _, rp in ipairs(radarRoadPositions) do
         if drawn >= RADAR_ROAD_DRAW_LIMIT then break end
         local dx = rp.x - playerPos.x
@@ -1792,8 +2033,6 @@ local function drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading
             local ang = math.atan2(dy, dx) - heading
             local px = -math.sin(ang) * dist * scale
             local py = -math.cos(ang) * dist * scale
-            -- tiny road-node square; cheap and reliable. This makes nearby roads visible even if
-            -- graph edge topology differs between maps.
             pcall(function()
                 drawList:AddRectFilled(im.ImVec2(cx + px - 1.5, cy + py - 1.5), im.ImVec2(cx + px + 1.5, cy + py + 1.5), roadCol, 1)
             end)
@@ -1880,6 +2119,10 @@ local function drawRadar(playerPos)
                     local v = be:getObjectByID(vd.id)
                     if v then addRadarBlip(items, "P", v:getPosition(), {1.0, 0.12, 0.08, 1.0}, playerPos) end
                 end
+                if vd.role == "racer" then
+                    local v = be:getObjectByID(vd.id)
+                    if v then addRadarBlip(items, "R", v:getPosition(), {1.0, 0.35, 0.15, 1.0}, playerPos) end
+                end
             end
             if mission.point.destPos then
                 addRadarBlip(items, "D", mission.point.destPos, {0.55, 0.8, 1.0, 1.0}, playerPos)
@@ -1899,6 +2142,7 @@ local function drawRadar(playerPos)
                     elseif mp.type == ENDURE then c = {0.75,0.20,1.0,1.0}
                     elseif mp.type == REACH then c = {0.85,0.85,1.0,1.0}
                     elseif mp.type == RALLY then c = {1.0,0.85,0.0,1.0}
+                    elseif mp.type == RACE then c = {1.0,0.35,0.15,1.0}
                     elseif mp.type == CRUISE then c = {0.45,0.85,0.45,1.0} end
                     addRadarBlip(items, tag, mp.pos, c, playerPos)
                 end
@@ -2040,6 +2284,12 @@ local function tickChaseTargetSpeed(dt)
             local v = be:getObjectByID(vd.id)
             if not v then return end
             local pos = v:getPosition()
+            local playerPos = getPlayerPos()
+            if not playerPos or playerPos:distance(pos) > CHASE_STOPPED_NEAR_DISTANCE then
+                targetStoppedSecs = 0
+                targetLastPos = pos
+                return
+            end
             if targetLastPos then
                 local moved = pos:distance(targetLastPos)
                 local speed = moved / CHASE_SPEED_INTERVAL  -- metres per second
@@ -2169,7 +2419,9 @@ local function tickTeleportPolice(playerPos, dt)
                     local d = math.random(POLICE_TELEPORT_RADIUS.min, POLICE_TELEPORT_RADIUS.max)
                     local spreadAng = (math.random() - 0.5) * math.pi * 0.55
                     local a = basePlayerAngle + spreadAng
-                    local newPos = vec3(playerPos.x + math.cos(a) * d, playerPos.y + math.sin(a) * d, playerPos.z + 1.5)
+                    local fallbackPos = vec3(playerPos.x + math.cos(a) * d, playerPos.y + math.sin(a) * d, playerPos.z + 1.5)
+                    local newPos = findRoadSpawnPositionNear(playerPos, POLICE_TELEPORT_RADIUS.min, POLICE_TELEPORT_RADIUS.max)
+                        or snapToGround(fallbackPos, playerPos)
                     pcall(function() v:setPosition(newPos) end)
                     vd.recycleCooldown = POLICE_RECYCLE_GRACE
                     v:queueLuaCommand(
@@ -2254,13 +2506,321 @@ local function showMissionHudMessage(dt, playerPos)
         local idx = mission.rallyCurrentIdx or 1
         local wp = mission.rallyWaypoints[idx]
         text = string.format("RALLY | %s | CP %d/%d | %s | %ds", mp.name, idx, #mission.rallyWaypoints, wp and formatMeters(playerPos:distance(wp)) or "??", math.max(0, math.ceil(mission.rallyTimeLeft or 0)))
+    elseif mtype == RACE and mission.rallyWaypoints then
+        local idx = mission.rallyCurrentIdx or 1
+        local wp = mission.rallyWaypoints[idx]
+        text = string.format("RACE | %s | CP %d/%d | %s | First to the finish", mp.name, idx, #mission.rallyWaypoints, wp and formatMeters(playerPos:distance(wp)) or "??")
     end
 
     if guihooks then guihooks.message(text, 1.2, "jonesingMissionHud") end
 end
 
+M._frameOps = {}
+
+function M._frameOps.tickMissionCooldowns(dt)
+    for name, cd in pairs(missionCooldowns) do
+        if cd > 0 then
+            missionCooldowns[name] = math.max(0, cd - dt)
+        end
+    end
+end
+
+function M._frameOps.drawMissionMarkers(playerPos)
+    for _, mp in ipairs(missionPoints) do
+        local isActive   = mission and mission.point == mp
+        local onCooldown = (missionCooldowns[mp.name] or 0) > 0
+
+        if (not mission and not onCooldown) or (onCooldown and not isActive) then
+            local pulse = 0.5 + 0.5 * math.sin(pulseTime)
+
+            local col
+            if isActive then
+                col = ColorF(1.0, 1.0, 0.0, 0.60 + 0.40 * pulse)
+            elseif onCooldown then
+                col = ColorF(0.5, 0.5, 0.5, 0.25)
+            else
+                col = ColorF(mp.color.r, mp.color.g, mp.color.b,
+                    mp.color.a * (0.55 + 0.45 * pulse))
+            end
+
+            drawBeacon(mp, col)
+
+            local labelZ   = adaptiveLabelZ(mp.pos, playerPos, BEACON_ABOVE)
+            local labelPos = vec3(mp.pos.x, mp.pos.y, labelZ)
+            local label
+
+            if isActive then
+                local mtype = mp.type
+                if mtype == CHASE then
+                    local tDist = getTargetDist(playerPos)
+                    label = string.format("%s  [%s]", mp.name,
+                        tDist and string.format("%d m", math.floor(tDist)) or "??")
+                elseif mtype == ESCAPE then
+                    label = string.format("%s  [%ds]", mp.name,
+                        math.max(0, math.ceil(ESCAPE_TIME_LIMIT - mission.timer)))
+                elseif mtype == FOLLOW then
+                    label = string.format("%s  [%d/%ds]", mp.name,
+                        math.floor(math.min(mission.timer, FOLLOW_DURATION)), FOLLOW_DURATION)
+                elseif mtype == ENDURE then
+                    label = string.format("%s  [%ds left]", mp.name,
+                        math.max(0, math.ceil(ENDURE_TIME_LIMIT - mission.timer)))
+                elseif mtype == REACH then
+                    local dDist = mp.destPos and playerPos and playerPos:distance(mp.destPos)
+                    label = string.format("%s  dest:%s", mp.name,
+                        dDist and string.format("%dm", math.floor(dDist)) or "??")
+                elseif mtype == RALLY then
+                    local idx   = mission.rallyCurrentIdx or 1
+                    local total = mission.rallyWaypoints and #mission.rallyWaypoints or 0
+                    label = string.format("%s  CP %d/%d  [%ds]", mp.name,
+                        idx, total, math.max(0, math.ceil(mission.rallyTimeLeft or 0)))
+                elseif mtype == RACE then
+                    local idx   = mission.rallyCurrentIdx or 1
+                    local total = mission.rallyWaypoints and #mission.rallyWaypoints or 0
+                    label = string.format("%s  CP %d/%d  [RACE]", mp.name, idx, total)
+                elseif mtype == CRUISE then
+                    local dDist = mp.destPos and playerPos and playerPos:distance(mp.destPos)
+                    label = string.format("%s  dest:%s  [%ds]", mp.name,
+                        dDist and string.format("%dm", math.floor(dDist)) or "??",
+                        math.max(0, math.ceil(CRUISE_TIME_LIMIT - mission.timer)))
+                else
+                    label = mp.name
+                end
+            elseif onCooldown then
+                label = string.format("%s  (CD: %ds)", mp.name,
+                    math.ceil(missionCooldowns[mp.name]))
+            else
+                local typeTags = {
+                    chase="CHASE", escape="ESCAPE", follow="FOLLOW",
+                    endure="ENDURE", reach="REACH", rally="RALLY", race="RACE", cruise="CRUISE",
+                }
+                label = string.format("[%s]  %s", typeTags[mp.type] or "?", missionDisplayName(mp))
+            end
+
+            debugDrawer:drawTextAdvanced(labelPos, label,
+                ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 140))
+        end
+    end
+
+    if mission and (mission.point.type == REACH or mission.point.type == CRUISE)
+       and mission.point.destPos then
+        local pulse = 0.5 + 0.5 * math.sin(pulseTime * 1.5)
+        drawDestBeacon(mission.point.destPos, pulse)
+
+        local dp     = mission.point.destPos
+        local dLabel = vec3(dp.x, dp.y, adaptiveLabelZ(dp, playerPos, DEST_BEACON_ABOVE))
+        debugDrawer:drawTextAdvanced(dLabel, "[ DESTINATION ]",
+            ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 80, 160))
+    end
+
+    if mission and (mission.point.type == RALLY or mission.point.type == RACE) and mission.rallyWaypoints then
+        local idx = mission.rallyCurrentIdx or 1
+        local wp  = mission.rallyWaypoints[idx]
+        if wp then
+            local pulse = 0.5 + 0.5 * math.sin(pulseTime * 2.0)
+            drawDestBeacon(wp, pulse)
+            local wLabel = vec3(wp.x, wp.y, adaptiveLabelZ(wp, playerPos, DEST_BEACON_ABOVE))
+            debugDrawer:drawTextAdvanced(wLabel,
+                string.format("[ CP %d/%d ]", idx, #mission.rallyWaypoints),
+                ColorF(1, 1, 0.6, 1), true, false, ColorI(40, 30, 0, 160))
+        end
+    end
+end
+
+function M._frameOps.tryStartNearbyMission(playerPos)
+    if mission or not playerPos then return end
+
+    for _, mp in ipairs(missionPoints) do
+        if (missionCooldowns[mp.name] or 0) <= 0 then
+            local dx = playerPos.x - mp.pos.x
+            local dy = playerPos.y - mp.pos.y
+            if dx * dx + dy * dy <= mp.triggerRadiusSq then
+                startMission(mp)
+                break
+            end
+        end
+    end
+end
+
+function M._frameOps.updateActiveMission(dt, playerPos)
+    if not mission then return false end
+
+    if mission.starting or not mission.started then
+        drawJonesingUI()
+        return true
+    end
+
+    mission.timer = mission.timer + dt
+    local mtype   = mission.point.type
+
+    if wantedLevelForMission and wantedLevelForMission(mtype) > 0 and mtype ~= ESCAPE then
+        tickTeleportPolice(playerPos, dt)
+    end
+    if tickPoliceBustedFail(playerPos, dt) then
+        cleanupMission(false, "Busted — immobilized with police close by!")
+        return true
+    end
+
+    if tickPlayerDamage(dt) then
+        cleanupMission(false, "Your vehicle was wrecked!")
+        return true
+    end
+
+    if im and im.IsKeyPressed and im.IsKeyPressed(im.Key_Backspace) then
+        cleanupMission(false, "Mission aborted by player.")
+        return true
+    end
+
+    if mtype == CHASE then
+        tickChaseTargetSpeed(dt)
+        local tDist = getTargetDist(playerPos)
+        if tDist and tDist > CHASE_ESCAPE_DISTANCE then
+            cleanupMission(false, "The target got away!")
+            return true
+        end
+        if checkChaseSuccess() then
+            cleanupMission(true)
+        end
+
+    elseif mtype == ESCAPE then
+        if mission.timer >= ESCAPE_TIME_LIMIT then
+            cleanupMission(false, "Time's up — you didn't shake them!")
+            return true
+        end
+        if checkEscapeSuccess() then
+            cleanupMission(true)
+        end
+
+    elseif mtype == FOLLOW then
+        local result = tickFollow(playerPos, dt)
+        if result == "success" then
+            cleanupMission(true)
+        elseif result and result:sub(1, 5) == "fail:" then
+            cleanupMission(false, result:sub(6))
+            return true
+        end
+
+    elseif mtype == ENDURE then
+        if tickPlayerDamage(dt) then
+            cleanupMission(false, "Your vehicle was wrecked — you didn't survive!")
+            return true
+        end
+        tickTeleportPolice(playerPos, dt)
+        if mission and mission.timer >= ENDURE_TIME_LIMIT then
+            cleanupMission(true)
+        end
+
+    elseif mtype == REACH then
+        if tickPlayerDamage(dt) then
+            cleanupMission(false, "Your vehicle was destroyed before reaching the destination!")
+            return true
+        end
+        tickTeleportPolice(playerPos, dt)
+        if mission.timer >= REACH_TIME_LIMIT then
+            cleanupMission(false, "Time's up — didn't reach the destination!")
+            return true
+        end
+        if playerPos and mission.point.destPos then
+            local dx = playerPos.x - mission.point.destPos.x
+            local dy = playerPos.y - mission.point.destPos.y
+            if dx * dx + dy * dy <= REACH_RADIUS * REACH_RADIUS then
+                cleanupMission(true)
+            end
+        end
+
+    elseif mtype == RALLY then
+        mission.rallyTimeLeft = (mission.rallyTimeLeft or RALLY_BASE_TIME) - dt
+        if mission.rallyTimeLeft <= 0 then
+            cleanupMission(false, "Time's up — you didn't reach the next checkpoint!")
+            return true
+        end
+        if playerPos and mission.rallyWaypoints then
+            local idx = mission.rallyCurrentIdx or 1
+            local wp  = mission.rallyWaypoints[idx]
+            if wp then
+                local dx = playerPos.x - wp.x
+                local dy = playerPos.y - wp.y
+                if dx * dx + dy * dy <= RALLY_CHECKPOINT_RADIUS * RALLY_CHECKPOINT_RADIUS then
+                    local total = #mission.rallyWaypoints
+                    if idx >= total then
+                        cleanupMission(true)
+                    else
+                        mission.rallyCurrentIdx = idx + 1
+                        mission.rallyTimeLeft   = (mission.rallyTimeLeft or 0) + RALLY_BONUS_TIME
+                        notify("info", "Checkpoint!",
+                            string.format("Checkpoint %d/%d reached! +%ds — keep going!",
+                                idx, total, RALLY_BONUS_TIME))
+                    end
+                end
+            end
+        end
+
+    elseif mtype == RACE then
+        if mission.raceRacers then
+            for vid, state in pairs(mission.raceRacers) do
+                if not state.finished then
+                    local v = be:getObjectByID(vid)
+                    if v then
+                        local idx = state.idx or 1
+                        local wp = mission.rallyWaypoints and mission.rallyWaypoints[idx]
+                        if wp then
+                            local pos = v:getPosition()
+                            local dx = pos.x - wp.x
+                            local dy = pos.y - wp.y
+                            if dx * dx + dy * dy <= RACE_CHECKPOINT_RADIUS * RACE_CHECKPOINT_RADIUS then
+                                if idx >= #mission.rallyWaypoints then
+                                    state.finished = true
+                                    cleanupMission(false, "A rival racer reached the finish line first!")
+                                    return true
+                                else
+                                    state.idx = idx + 1
+                                end
+                            end
+                        end
+                    else
+                        state.finished = true
+                    end
+                end
+            end
+        end
+
+        if playerPos and mission.rallyWaypoints then
+            local idx = mission.rallyCurrentIdx or 1
+            local wp  = mission.rallyWaypoints[idx]
+            if wp then
+                local dx = playerPos.x - wp.x
+                local dy = playerPos.y - wp.y
+                if dx * dx + dy * dy <= RACE_CHECKPOINT_RADIUS * RACE_CHECKPOINT_RADIUS then
+                    local total = #mission.rallyWaypoints
+                    if idx >= total then
+                        cleanupMission(true)
+                    else
+                        mission.rallyCurrentIdx = idx + 1
+                        notify("info", "Checkpoint!",
+                            string.format("Checkpoint %d/%d reached — stay ahead!", idx, total))
+                    end
+                end
+            end
+        end
+
+    elseif mtype == CRUISE then
+        if mission.timer >= CRUISE_TIME_LIMIT then
+            cleanupMission(false, "Time's up — you didn't reach the destination!")
+            return true
+        end
+        if playerPos and mission.point.destPos then
+            local dx = playerPos.x - mission.point.destPos.x
+            local dy = playerPos.y - mission.point.destPos.y
+            if dx * dx + dy * dy <= CRUISE_RADIUS * CRUISE_RADIUS then
+                cleanupMission(true)
+            end
+        end
+    end
+
+    return false
+end
+
 -- ── Per-frame update ───────────────────────────────────────────────────────────
-local function onUpdate(dt, dtSim)
+function M.onUpdate(dt, dtSim)
     -- ── Deferred initialisation ─────────────────────────────────────────────
     -- Wait for the map navigation graph to become available so that mission
     -- markers can be placed on valid roadways.  After INIT_TIMEOUT seconds,
@@ -2310,264 +2870,11 @@ local function onUpdate(dt, dtSim)
         return
     end
 
-    -- Tick post-mission cooldowns
-    for name, cd in pairs(missionCooldowns) do
-        if cd > 0 then
-            missionCooldowns[name] = math.max(0, cd - dt)
-        end
-    end
-
-    -- ── Draw all mission markers ────────────────────────────────────────────
-    for _, mp in ipairs(missionPoints) do
-        local isActive   = mission and mission.point == mp
-        local onCooldown = (missionCooldowns[mp.name] or 0) > 0
-
-        -- While a mission is running, skip idle markers (no pillar clutter during gameplay)
-        if (not mission and not onCooldown) or (onCooldown and not isActive) then
-        local pulse      = 0.5 + 0.5 * math.sin(pulseTime)
-
-        local col
-        if isActive then
-            col = ColorF(1.0, 1.0, 0.0, 0.60 + 0.40 * pulse)
-        elseif onCooldown then
-            col = ColorF(0.5, 0.5, 0.5, 0.25)
-        else
-            col = ColorF(mp.color.r, mp.color.g, mp.color.b,
-                         mp.color.a * (0.55 + 0.45 * pulse))
-        end
-
-        drawBeacon(mp, col)
-
-        -- Floating label above the beacon top
-        local labelZ   = adaptiveLabelZ(mp.pos, playerPos, BEACON_ABOVE)
-        local labelPos = vec3(mp.pos.x, mp.pos.y, labelZ)
-        local label
-
-        if isActive then
-            local mtype = mp.type
-            if mtype == CHASE then
-                local tDist = getTargetDist(playerPos)
-                label = string.format("%s  [%s]", mp.name,
-                    tDist and string.format("%d m", math.floor(tDist)) or "??")
-            elseif mtype == ESCAPE then
-                label = string.format("%s  [%ds]", mp.name,
-                    math.max(0, math.ceil(ESCAPE_TIME_LIMIT - mission.timer)))
-            elseif mtype == FOLLOW then
-                label = string.format("%s  [%d/%ds]", mp.name,
-                    math.floor(math.min(mission.timer, FOLLOW_DURATION)), FOLLOW_DURATION)
-            elseif mtype == ENDURE then
-                label = string.format("%s  [%ds left]", mp.name,
-                    math.max(0, math.ceil(ENDURE_TIME_LIMIT - mission.timer)))
-            elseif mtype == REACH then
-                local dDist = mp.destPos and playerPos and playerPos:distance(mp.destPos)
-                label = string.format("%s  dest:%s", mp.name,
-                    dDist and string.format("%dm", math.floor(dDist)) or "??")
-            elseif mtype == RALLY then
-                local idx   = mission.rallyCurrentIdx or 1
-                local total = mission.rallyWaypoints and #mission.rallyWaypoints or 0
-                label = string.format("%s  CP %d/%d  [%ds]", mp.name,
-                    idx, total, math.max(0, math.ceil(mission.rallyTimeLeft or 0)))
-            elseif mtype == CRUISE then
-                local dDist = mp.destPos and playerPos and playerPos:distance(mp.destPos)
-                label = string.format("%s  dest:%s  [%ds]", mp.name,
-                    dDist and string.format("%dm", math.floor(dDist)) or "??",
-                    math.max(0, math.ceil(CRUISE_TIME_LIMIT - mission.timer)))
-            else
-                label = mp.name
-            end
-        elseif onCooldown then
-            label = string.format("%s  (CD: %ds)", mp.name,
-                math.ceil(missionCooldowns[mp.name]))
-        else
-            local typeTags = {
-                chase="CHASE", escape="ESCAPE", follow="FOLLOW",
-                endure="ENDURE", reach="REACH", rally="RALLY", cruise="CRUISE",
-            }
-            label = string.format("[%s]  %s", typeTags[mp.type] or "?", missionDisplayName(mp))
-        end
-
-        debugDrawer:drawTextAdvanced(labelPos, label,
-            ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 0, 140))
-        end  -- render this marker
-    end  -- for _, mp
-
-    -- ── Draw destination beacon for active REACH / CRUISE missions ──────────
-    if mission and (mission.point.type == REACH or mission.point.type == CRUISE)
-       and mission.point.destPos then
-        local pulse = 0.5 + 0.5 * math.sin(pulseTime * 1.5)
-        drawDestBeacon(mission.point.destPos, pulse)
-
-        -- Destination label
-        local dp      = mission.point.destPos
-        local dLabel  = vec3(dp.x, dp.y, adaptiveLabelZ(dp, playerPos, DEST_BEACON_ABOVE))
-        debugDrawer:drawTextAdvanced(dLabel, "[ DESTINATION ]",
-            ColorF(1, 1, 1, 1), true, false, ColorI(0, 0, 80, 160))
-    end
-
-    -- ── Draw RALLY waypoint beacon ──────────────────────────────────────────
-    if mission and mission.point.type == RALLY and mission.rallyWaypoints then
-        local idx = mission.rallyCurrentIdx or 1
-        local wp  = mission.rallyWaypoints[idx]
-        if wp then
-            local pulse = 0.5 + 0.5 * math.sin(pulseTime * 2.0)
-            drawDestBeacon(wp, pulse)
-            local wLabel = vec3(wp.x, wp.y, adaptiveLabelZ(wp, playerPos, DEST_BEACON_ABOVE))
-            debugDrawer:drawTextAdvanced(wLabel,
-                string.format("[ CP %d/%d ]", idx, #mission.rallyWaypoints),
-                ColorF(1, 1, 0.6, 1), true, false, ColorI(40, 30, 0, 160))
-        end
-    end
-
-    -- ── Proximity check — start mission when player enters a marker zone ─────
-    if not mission and playerPos then
-        for _, mp in ipairs(missionPoints) do
-            if (missionCooldowns[mp.name] or 0) <= 0 then
-                local dx = playerPos.x - mp.pos.x
-                local dy = playerPos.y - mp.pos.y
-                if dx * dx + dy * dy <= mp.triggerRadiusSq then
-                    startMission(mp)
-                    break
-                end
-            end
-        end
-    end
-
-    -- ── Tick active mission ─────────────────────────────────────────────────
-    if mission then
-        if mission.starting or not mission.started then
-            drawJonesingUI()
-            return
-        end
-
-        mission.timer = mission.timer + dt
-        local mtype   = mission.point.type
-
-        -- Wanted police recycling applies to chase/reach/endure style wanted levels.
-        -- ESCAPE intentionally does not recycle because its win condition is shaking every unit.
-        if wantedLevelForMission and wantedLevelForMission(mtype) > 0 and mtype ~= ESCAPE then
-            tickTeleportPolice(playerPos, dt)
-        end
-        if tickPoliceBustedFail(playerPos, dt) then
-            cleanupMission(false, "Busted — immobilized with police close by!")
-            return
-        end
-
-        -- Universal player wreck fail for every mission after startup.
-        if tickPlayerDamage(dt) then
-            cleanupMission(false, "Your vehicle was wrecked!")
-            return
-        end
-
-        -- Keyboard quit: Backspace aborts the active mission
-        if im and im.IsKeyPressed and im.IsKeyPressed(im.Key_Backspace) then
-            cleanupMission(false, "Mission aborted by player.")
-            return
-        end
-
-        if mtype == CHASE then
-            tickChaseTargetSpeed(dt)
-            local tDist = getTargetDist(playerPos)
-            if tDist and tDist > CHASE_ESCAPE_DISTANCE then
-                cleanupMission(false, "The target got away!")
-                return
-            end
-            if checkChaseSuccess() then
-                cleanupMission(true)
-            end
-
-        elseif mtype == ESCAPE then
-            if mission.timer >= ESCAPE_TIME_LIMIT then
-                cleanupMission(false, "Time's up — you didn't shake them!")
-                return
-            end
-            if checkEscapeSuccess() then
-                cleanupMission(true)
-            end
-
-        elseif mtype == FOLLOW then
-            local result = tickFollow(playerPos, dt)
-            if result == "success" then
-                cleanupMission(true)
-            elseif result and result:sub(1, 5) == "fail:" then
-                cleanupMission(false, result:sub(6))
-                return
-            end
-
-        elseif mtype == ENDURE then
-            -- Player vehicle wrecked → mission fail
-            if tickPlayerDamage(dt) then
-                cleanupMission(false, "Your vehicle was wrecked — you didn't survive!")
-                return
-            end
-            tickTeleportPolice(playerPos, dt)
-            if mission and mission.timer >= ENDURE_TIME_LIMIT then
-                cleanupMission(true)
-            end
-
-        elseif mtype == REACH then
-            -- Player vehicle wrecked → mission fail
-            if tickPlayerDamage(dt) then
-                cleanupMission(false, "Your vehicle was destroyed before reaching the destination!")
-                return
-            end
-            tickTeleportPolice(playerPos, dt)
-            -- tickTeleportPolice does not call cleanupMission; mission is always valid here
-            if mission.timer >= REACH_TIME_LIMIT then
-                cleanupMission(false, "Time's up — didn't reach the destination!")
-                return
-            end
-            -- 2D proximity check to destination (same style as trigger zones)
-            if playerPos and mission.point.destPos then
-                local dx = playerPos.x - mission.point.destPos.x
-                local dy = playerPos.y - mission.point.destPos.y
-                if dx * dx + dy * dy <= REACH_RADIUS * REACH_RADIUS then
-                    cleanupMission(true)
-                end
-            end
-
-        elseif mtype == RALLY then
-            -- Count down the rally timer
-            mission.rallyTimeLeft = (mission.rallyTimeLeft or RALLY_BASE_TIME) - dt
-            if mission.rallyTimeLeft <= 0 then
-                cleanupMission(false, "Time's up — you didn't reach the next checkpoint!")
-                return
-            end
-            -- Check proximity to current waypoint
-            if playerPos and mission.rallyWaypoints then
-                local idx = mission.rallyCurrentIdx or 1
-                local wp  = mission.rallyWaypoints[idx]
-                if wp then
-                    local dx = playerPos.x - wp.x
-                    local dy = playerPos.y - wp.y
-                    if dx * dx + dy * dy <= RALLY_CHECKPOINT_RADIUS * RALLY_CHECKPOINT_RADIUS then
-                        -- Hit this checkpoint
-                        local total = #mission.rallyWaypoints
-                        if idx >= total then
-                            cleanupMission(true)
-                        else
-                            mission.rallyCurrentIdx = idx + 1
-                            mission.rallyTimeLeft   = (mission.rallyTimeLeft or 0) + RALLY_BONUS_TIME
-                            notify("info", "Checkpoint!",
-                                string.format("Checkpoint %d/%d reached! +%ds — keep going!",
-                                    idx, total, RALLY_BONUS_TIME))
-                        end
-                    end
-                end
-            end
-
-        elseif mtype == CRUISE then
-            if mission.timer >= CRUISE_TIME_LIMIT then
-                cleanupMission(false, "Time's up — you didn't reach the destination!")
-                return
-            end
-            if playerPos and mission.point.destPos then
-                local dx = playerPos.x - mission.point.destPos.x
-                local dy = playerPos.y - mission.point.destPos.y
-                if dx * dx + dy * dy <= CRUISE_RADIUS * CRUISE_RADIUS then
-                    cleanupMission(true)
-                end
-            end
-        end
+    M._frameOps.tickMissionCooldowns(dt)
+    M._frameOps.drawMissionMarkers(playerPos)
+    M._frameOps.tryStartNearbyMission(playerPos)
+    if M._frameOps.updateActiveMission(dt, playerPos) then
+        return
     end
 
     showMissionHudMessage(dt, playerPos)
@@ -2592,7 +2899,6 @@ local function onExtensionUnloaded()
     log("I", "jonesingMissions", "Jonesing Mission System unloaded.")
 end
 
-M.onUpdate            = onUpdate
 -- Do not export drawJonesingUI as onGui; onUpdate already draws it. Exporting both can make BeamNG treat HP/radar like separate app windows.
 M.onExtensionLoaded   = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded
