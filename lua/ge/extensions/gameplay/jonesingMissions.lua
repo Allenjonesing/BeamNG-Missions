@@ -1391,14 +1391,20 @@ local function buildRaceAiCommand(waypoints)
     local cmd = { "local wpTargetList = {}" }
     for i, waypoint in ipairs(waypoints or {}) do
         if waypoint then
+            -- vec3 requires three separate numeric arguments; passing a table causes a nil
+            -- result which then triggers "attempt to index a nil value" in the AI path code.
             cmd[#cmd + 1] = string.format(
-                "wpTargetList[%d] = vec3({x=%0.6f,y=%0.6f,z=%0.6f})",
+                "wpTargetList[%d] = vec3(%0.6f,%0.6f,%0.6f)",
                 i, waypoint.x, waypoint.y, waypoint.z)
         end
     end
-    cmd[#cmd + 1] = "ai.driveUsingPath({wpTargetList = wpTargetList, noOfLaps = 1, aggression = 0.9, avoidCars = 'on'})"
-    cmd[#cmd + 1] = "ai.setRacing(true)"
-    cmd[#cmd + 1] = "ai.setParameters({turnForceCoef = 4, awarenessForceCoef = 0.15})"
+    -- aggression must be set via ai.setAggression(), not as a driveUsingPath key.
+    -- avoidCars = 'off' lets the AI drive without slowing for other vehicles (race mode).
+    cmd[#cmd + 1] = "ai.driveUsingPath({wpTargetList = wpTargetList, noOfLaps = 1, avoidCars = 'off'})"
+    -- ai.setAggression(1.0) drives at full aggression – as fast as possible to each checkpoint.
+    -- ai.setRacing() and ai.setParameters({}) are not part of BeamNG's standard AI API and
+    -- were the source of the "nil value" and "table passed where number expected" errors.
+    cmd[#cmd + 1] = "ai.setAggression(1.0)"
     return table.concat(cmd, "; ")
 end
 
