@@ -24,23 +24,23 @@ local M = {}
 
 -- BeamNG ImGui is usually exposed as ui_imgui in extensions.
 -- Keep the old global fallback so the file remains version-tolerant.
-local im = rawget(_G, "ui_imgui") or rawget(_G, "im")
+im = rawget(_G, "ui_imgui") or rawget(_G, "im")
 
 
 -- ── Mission types ──────────────────────────────────────────────────────────────
-local CHASE  = "chase"
-local ESCAPE = "escape"
-local FOLLOW = "follow"
-local ENDURE = "endure"
-local REACH  = "reach"
-local RALLY  = "rally"
-local RACE   = "race"
-local CRUISE = "cruise"
+CHASE = "chase"
+ESCAPE = "escape"
+FOLLOW = "follow"
+ENDURE = "endure"
+REACH = "reach"
+RALLY = "rally"
+RACE = "race"
+CRUISE = "cruise"
 
 -- ── Mission templates ──────────────────────────────────────────────────────────
 -- Positions are assigned at runtime from the map navigation graph.  The fallback
 -- coordinates target West Coast USA.
-local missionTemplates = {
+missionTemplates = {
     {
         name          = "Smash and Grab",
         type          = CHASE,
@@ -159,28 +159,28 @@ local missionTemplates = {
 }
 
 -- ── Tuning constants ───────────────────────────────────────────────────────────
-local PULSE_SPEED           = 1.5    -- marker pulse rate (radians / second)
-local ESCAPE_TIME_LIMIT     = 120    -- seconds before ESCAPE mission fails
-local MISSION_COOLDOWN      = 10     -- seconds before the same marker can re-trigger
-local ESCAPE_MIN_DISTANCE   = 500    -- metres: all police beyond this = escaped (ESCAPE win)
-local CHASE_DAMAGE_THRESH   = 0.50   -- damage fraction that counts as "destroyed"
-local CHASE_ESCAPE_DISTANCE = 300    -- metres: target beyond this = got away (CHASE fail)
-local CHASE_SPAWN_OFFSET    = 50     -- metres ahead of player to spawn the target
-local CHASE_TARGET_MODEL    = "etk800"
-local CHASE_STOPPED_SPEED   = 3.0    -- m/s: below this the target is considered stopped
-local CHASE_STOPPED_COOLDOWN = 10.0   -- seconds after spawn before stopped-time starts counting
-local CHASE_STOPPED_NEAR_DISTANCE = 15.0 -- metres: player must be this close before immobilization counts
-local CHASE_STOPPED_TIME    = 5.0    -- seconds: target stopped this long = destroyed / immobilized
-local CHASE_SPEED_INTERVAL  = 0.5    -- seconds between speed checks
-local POLICE_SPAWN_RADIUS   = { min = 100, max = 200 }
-local POLICE_COUNT          = 4      -- 4 feels more GTA-like without murdering performance
-local POLICE_SPAWN_ATTEMPTS = 5      -- fewer attempts; bad .pc paths get expensive during mission start
+PULSE_SPEED = 1.5    -- marker pulse rate (radians / second)
+ESCAPE_TIME_LIMIT = 120    -- seconds before ESCAPE mission fails
+MISSION_COOLDOWN = 10     -- seconds before the same marker can re-trigger
+ESCAPE_MIN_DISTANCE = 500    -- metres: all police beyond this = escaped (ESCAPE win)
+CHASE_DAMAGE_THRESH = 0.50   -- damage fraction that counts as "destroyed"
+CHASE_ESCAPE_DISTANCE = 300    -- metres: target beyond this = got away (CHASE fail)
+CHASE_SPAWN_OFFSET = 50     -- metres ahead of player to spawn the target
+CHASE_TARGET_MODEL = "etk800"
+CHASE_STOPPED_SPEED = 3.0    -- m/s: below this the target is considered stopped
+CHASE_STOPPED_COOLDOWN = 10.0   -- seconds after spawn before stopped-time starts counting
+CHASE_STOPPED_NEAR_DISTANCE = 15.0 -- metres: player must be this close before immobilization counts
+CHASE_STOPPED_TIME = 5.0    -- seconds: target stopped this long = destroyed / immobilized
+CHASE_SPEED_INTERVAL = 0.5    -- seconds between speed checks
+POLICE_SPAWN_RADIUS = { min = 100, max = 200 }
+POLICE_COUNT = 4      -- 4 feels more GTA-like without murdering performance
+POLICE_SPAWN_ATTEMPTS = 5      -- fewer attempts; bad .pc paths get expensive during mission start
 
 -- Vehicle config notes:
 -- * model = the vehicle folder name.
 -- * config = path to a .pc file. This must actually exist in your BeamNG install/mods.
 -- * If one of these paths is wrong, the spawn attempt may fail or appear as a plain/default car.
-local POLICE_VARIANTS = {
+POLICE_VARIANTS = {
     { model = "fullsize", config = "vehicles/fullsize/police.pc",             label = "Grand Marshal Police" },
     { model = "roamer",   config = "vehicles/roamer/police.pc",               label = "Roamer Police SUV" },
     { model = "sunburst2", config = "vehicles/sunburst2/police.pc",           label = "Sunburst Police" },
@@ -191,117 +191,114 @@ local POLICE_VARIANTS = {
     { model = "etk800",   config = "vehicles/etk800/854_police_A_alt.pc",      label = "ETK 854 Police Alt" },
 }
 -- FOLLOW mission tuning
-local FOLLOW_SPAWN_DIST     = 10      -- metres: target spawns right next to player for identification
-local FOLLOW_MIN_DIST       = 20     -- metres: too close = out-of-range
-local FOLLOW_MAX_DIST       = 100    -- metres: too far  = out-of-range
-local FOLLOW_GRACE          = 10.0   -- seconds the player can be out-of-range before failing
-local FOLLOW_IMMUNITY       = 20.0   -- seconds at mission start before "too close" detection activates
-local FOLLOW_DURATION       = 120     -- seconds of sustained in-range following = success
-local FOLLOW_DAMAGE_THRESH  = 0.10   -- damage to followed vehicle that triggers failure
-local FOLLOW_DMG_INTERVAL   = 1.0    -- seconds between VE-side damage re-checks
+FOLLOW_SPAWN_DIST = 10      -- metres: target spawns right next to player for identification
+FOLLOW_MIN_DIST = 20     -- metres: too close = out-of-range
+FOLLOW_MAX_DIST = 100    -- metres: too far  = out-of-range
+FOLLOW_GRACE = 10.0   -- seconds the player can be out-of-range before failing
+FOLLOW_IMMUNITY = 20.0   -- seconds at mission start before "too close" detection activates
+FOLLOW_DURATION = 120     -- seconds of sustained in-range following = success
+FOLLOW_DAMAGE_THRESH = 0.10   -- damage to followed vehicle that triggers failure
+FOLLOW_DMG_INTERVAL = 1.0    -- seconds between VE-side damage re-checks
 
 -- ENDURE mission tuning
-local ENDURE_TIME_LIMIT        = 120     -- seconds to survive recycling police = success
-local ENDURE_RECYCLE_DIST      = 300    -- police beyond this from the player are teleported back
-local POLICE_TELEPORT_RADIUS   = { min = 200, max = 300 }   -- far-ahead recycle placement; grace prevents instant re-recycle
-local POLICE_TELEPORT_INTERVAL = 2.5    -- seconds between recycle-teleport checks
+ENDURE_TIME_LIMIT = 120     -- seconds to survive recycling police = success
+ENDURE_RECYCLE_DIST = 300    -- police beyond this from the player are teleported back
+POLICE_TELEPORT_RADIUS = { min = 200, max = 300 }   -- far-ahead recycle placement; grace prevents instant re-recycle
+POLICE_TELEPORT_INTERVAL = 2.5    -- seconds between recycle-teleport checks
 
 -- REACH mission tuning
-local REACH_TIME_LIMIT      = 180    -- seconds to reach destination before failing
-local REACH_RADIUS          = 20     -- metres: arriving within this of destPos = success
+REACH_TIME_LIMIT = 180    -- seconds to reach destination before failing
+REACH_RADIUS = 20     -- metres: arriving within this of destPos = success
 
 -- RALLY mission tuning (multi-checkpoint point-to-point)
-local RALLY_CHECKPOINT_COUNT  = 5       -- total waypoints to reach
-local RALLY_BASE_TIME         = 60      -- seconds for the first checkpoint
-local RALLY_BONUS_TIME        = 30      -- seconds added per checkpoint reached
-local RALLY_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
-local RALLY_WAYPOINT_SPREAD   = 400     -- metres: max distance between successive waypoints
+RALLY_CHECKPOINT_COUNT = 5       -- total waypoints to reach
+RALLY_BASE_TIME = 60      -- seconds for the first checkpoint
+RALLY_BONUS_TIME = 30      -- seconds added per checkpoint reached
+RALLY_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
+RALLY_WAYPOINT_SPREAD = 400     -- metres: max distance between successive waypoints
 
 -- RACE mission tuning (AI racers + ordered checkpoints, no timer)
-local RACE_CHECKPOINT_COUNT   = 5       -- total checkpoints in the street race
-local RACE_CHECKPOINT_RADIUS  = 25      -- metres: arriving within this of a waypoint = hit
-local RACE_RACER_COUNT        = 3       -- number of AI racers spawned for the event
-local RACE_SPAWN_RADIUS       = { min = 12, max = 40 }
-local RACE_VARIANTS = {
+RACE_CHECKPOINT_COUNT = 5       -- total checkpoints in the street race
+RACE_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
+RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
+RACE_SPAWN_RADIUS = { min = 3, max = 10 }
+RACE_VARIANTS = {
     { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
-    { model = "sunburst", label = "Sunburst",         color = "0.95 0.80 0.15 1" },
-    { model = "200bx",    label = "200BX",            color = "0.15 0.55 0.95 1" },
-    { model = "sbr",      label = "SBR4",             color = "0.95 0.35 0.15 1" },
     { model = "covet",    label = "Covet",            color = "0.20 0.85 0.35 1" },
     { model = "bolide",   label = "Civetta Bolide",   color = "0.95 0.15 0.15 1" },
 }
 
 -- CRUISE mission tuning (single far destination, no police, player chooses route)
-local CRUISE_TIME_LIMIT       = 300     -- seconds to reach the destination
-local CRUISE_RADIUS           = 25      -- metres: arriving within this of destPos = success
+CRUISE_TIME_LIMIT = 300     -- seconds to reach the destination
+CRUISE_RADIUS = 25      -- metres: arriving within this of destPos = success
 
 -- Player damage tracking (ESCAPE / ENDURE / REACH fail condition)
-local PLAYER_DAMAGE_THRESH      = 0.70   -- player vehicle wrecked at this damage level
-local PLAYER_DMG_CHECK_INTERVAL = 1.0    -- seconds between VE-side player damage checks
-local DRIVER_SEAT_CHECK_INTERVAL = 0.85   -- seconds between player/body/driver-seat health probes
-local WANTED_RECYCLE_INTERVAL    = 2.0    -- seconds between wanted police recycle checks
-local WANTED_RECYCLE_DISTANCE    = 300    -- wanted police farther than this are recycled ahead
-local POLICE_RECYCLE_GRACE       = 10.0   -- seconds after spawn/teleport before a police unit may recycle again
-local PLAYER_IMMOBILE_SPEED      = 2.0    -- m/s; below this counts as immobilized/stuck
-local PLAYER_IMMOBILE_TIME       = 10.0    -- seconds immobilized near police before failing
-local PLAYER_BUSTED_DISTANCE     = 10     -- metres; closest police must be within this to bust immobilized player
+PLAYER_DAMAGE_THRESH = 0.70   -- player vehicle wrecked at this damage level
+PLAYER_DMG_CHECK_INTERVAL = 1.0    -- seconds between VE-side player damage checks
+DRIVER_SEAT_CHECK_INTERVAL = 0.85   -- seconds between player/body/driver-seat health probes
+WANTED_RECYCLE_INTERVAL = 2.0    -- seconds between wanted police recycle checks
+WANTED_RECYCLE_DISTANCE = 300    -- wanted police farther than this are recycled ahead
+POLICE_RECYCLE_GRACE = 10.0   -- seconds after spawn/teleport before a police unit may recycle again
+PLAYER_IMMOBILE_SPEED = 2.0    -- m/s; below this counts as immobilized/stuck
+PLAYER_IMMOBILE_TIME = 10.0    -- seconds immobilized near police before failing
+PLAYER_BUSTED_DISTANCE = 10     -- metres; closest police must be within this to bust immobilized player
 
 -- Beacon visual constants — dense pillar so spheres overlap and form a solid column
-local BEACON_BELOW        = 3      -- metres below marker Z — avoid burying pillars below road surfaces
-local BEACON_ABOVE        = 75    -- metres above marker Z — huge GTA-style sky pillar
-local BEACON_STEPS        = 16    -- fewer slices; cheaper debugDrawer pillar
-local BEACON_PILLAR_R     = 4.0    -- radius of pillar spheres (m)
-local BEACON_RING_SEGS    = 12     -- segments in the ground-level trigger ring
+BEACON_BELOW = 3      -- metres below marker Z — avoid burying pillars below road surfaces
+BEACON_ABOVE = 75    -- metres above marker Z — huge GTA-style sky pillar
+BEACON_STEPS = 16    -- fewer slices; cheaper debugDrawer pillar
+BEACON_PILLAR_R = 4.0    -- radius of pillar spheres (m)
+BEACON_RING_SEGS = 12     -- segments in the ground-level trigger ring
 
 -- Destination beacon (REACH mission) — brighter and distinct from mission markers (larger radius)
-local DEST_BEACON_BELOW   = 3
-local DEST_BEACON_ABOVE   = 75
-local DEST_BEACON_STEPS   = 16
-local DEST_BEACON_R       = 4.8   -- larger than BEACON_PILLAR_R so it stands out
-local DEST_BEACON_RING    = 12
+DEST_BEACON_BELOW = 3
+DEST_BEACON_ABOVE = 75
+DEST_BEACON_STEPS = 16
+DEST_BEACON_R = 4.8   -- larger than BEACON_PILLAR_R so it stands out
+DEST_BEACON_RING = 12
 
 -- Road placement tuning
-local MIN_MISSION_SPACING  = 200    -- metres between mission markers
-local INIT_TIMEOUT         = 5.0    -- seconds to wait for map data before using fallback positions
+MIN_MISSION_SPACING = 200    -- metres between mission markers
+INIT_TIMEOUT = 5.0    -- seconds to wait for map data before using fallback positions
 
 -- HUD constants
-local HUD_WINDOW_WIDTH    = 540
-local HUD_SCALE           = 1.50
-local RADAR_WINDOW_SIZE   = 320
-local RADAR_RANGE_METERS  = 250
-local RADAR_ROAD_DRAW_LIMIT = 120
-local DIST_KM_THRESHOLD   = 1000   -- metres; above this shown in km
-local AUTOSAVE_PATH       = "/settings/jonesingMissions.autosave.json"
+HUD_WINDOW_WIDTH = 540
+HUD_SCALE = 1.50
+RADAR_WINDOW_SIZE = 320
+RADAR_RANGE_METERS = 250
+RADAR_ROAD_DRAW_LIMIT = 120
+DIST_KM_THRESHOLD = 1000   -- metres; above this shown in km
+AUTOSAVE_PATH = "/settings/jonesingMissions.autosave.json"
 
 -- ── State ──────────────────────────────────────────────────────────────────────
-local pulseTime         = 0
-local mission           = nil   -- active mission table, or nil when idle
-local spawnedVehicles   = {}    -- { id = <vehicleID>, role = "target"|"police" }
-local missionCooldowns  = {}    -- mp.name -> seconds remaining on cooldown
-local destroyedTargets  = {}    -- [vehicleID] = true when VE reports damage >= threshold
-local playerWrecked     = false -- set by VE callback when player damage >= threshold
-local targetLastPos     = nil   -- vec3: last-known position of chase target for speed estimation
-local targetStoppedSecs = 0     -- seconds the chase target has been stationary
-local targetSpeedTimer  = 0     -- accumulator for speed check interval
-local missionPoints     = {}    -- populated at init from templates + road positions
-local initialized       = false -- true once mission positions have been assigned
-local initTimer         = 0     -- seconds spent waiting for map data
-local loaderHideTimer   = 0     -- keeps loader visible briefly after heavy spawn work
-local hudMsgTimer       = 0     -- throttles built-in guihooks HUD fallback
-local focusReturnTimer  = 0     -- repeatedly returns focus to player after AI spawns
-local loaderActive      = false -- custom ImGui loader overlay; survives when built-in loader fails
-local loaderLabel       = "Loading..."
-local bigBannerText     = ""
-local bigBannerTimer    = 0
-local missionCompletedByType = {} -- runtime unlocks: only next tier for each type is visible
-local templateTiersReady = false
-local lastSimClock      = nil
-local missionStartHome  = nil
-local radarRoadPositions = {}
-local radarRoadSegments = {}
-local getPlayerVehicle  = nil -- forward declaration used by helpers above the concrete function
+pulseTime = 0
+mission = nil   -- active mission table, or nil when idle
+spawnedVehicles = {}    -- { id = <vehicleID>, role = "target"|"police" }
+missionCooldowns = {}    -- mp.name -> seconds remaining on cooldown
+destroyedTargets = {}    -- [vehicleID] = true when VE reports damage >= threshold
+playerWrecked = false -- set by VE callback when player damage >= threshold
+targetLastPos = nil   -- vec3: last-known position of chase target for speed estimation
+targetStoppedSecs = 0     -- seconds the chase target has been stationary
+targetSpeedTimer = 0     -- accumulator for speed check interval
+missionPoints = {}    -- populated at init from templates + road positions
+initialized = false -- true once mission positions have been assigned
+initTimer = 0     -- seconds spent waiting for map data
+loaderHideTimer = 0     -- keeps loader visible briefly after heavy spawn work
+hudMsgTimer = 0     -- throttles built-in guihooks HUD fallback
+focusReturnTimer = 0     -- repeatedly returns focus to player after AI spawns
+loaderActive = false -- custom ImGui loader overlay; survives when built-in loader fails
+loaderLabel = "Loading..."
+bigBannerText = ""
+bigBannerTimer = 0
+missionCompletedByType = {} -- runtime unlocks: only next tier for each type is visible
+templateTiersReady = false
+lastSimClock = nil
+missionStartHome = nil
+radarRoadPositions = {}
+radarRoadSegments = {}
+getPlayerVehicle = nil -- forward declaration used by helpers above the concrete function
 
-local function sanitizeMissionProgress(data)
+function sanitizeMissionProgress(data)
     local out = {}
     if type(data) ~= "table" then return out end
     for _, tpl in ipairs(missionTemplates) do
@@ -313,7 +310,7 @@ local function sanitizeMissionProgress(data)
     return out
 end
 
-local function saveAutosave(reason)
+function saveAutosave(reason)
     if not jsonWriteFile then return false end
     local payload = {
         version = 1,
@@ -331,7 +328,7 @@ local function saveAutosave(reason)
     return false
 end
 
-local function loadAutosave()
+function loadAutosave()
     if not jsonReadFile then return false end
 
     local ok, data = pcall(jsonReadFile, AUTOSAVE_PATH)
@@ -344,7 +341,7 @@ local function loadAutosave()
     return true
 end
 
-local function asVec3(pos)
+function asVec3(pos)
     if not pos or type(pos.x) ~= "number" or type(pos.y) ~= "number" or type(pos.z) ~= "number" then
         return nil
     end
@@ -356,7 +353,7 @@ end
 -- Collects positions from the map navigation graph (road network) and returns
 -- `count` positions that are at least `minSpacing` metres apart.  Returns nil if
 -- the map graph is unavailable or has too few nodes.
-local function findRandomRoadPositions(count, minSpacing)
+function findRandomRoadPositions(count, minSpacing)
     if not map or not map.getGraphpath then return nil end
 
     local ok, gp = pcall(map.getGraphpath)
@@ -478,7 +475,7 @@ end
 
 -- Assign sequential runtime tiers per mission type, based on template order.
 -- Only tier N+1 is visible where N is the number completed for that mission type.
-local function ensureTemplateTiers()
+function ensureTemplateTiers()
     if templateTiersReady then return end
     local counts = {}
     for _, tpl in ipairs(missionTemplates) do
@@ -490,14 +487,14 @@ local function ensureTemplateTiers()
 end
 
 
-local function missionDisplayName(mp)
+function missionDisplayName(mp)
     if not mp then return "Mission" end
     local tier = mp.tier or 1
     local diff = mp.difficulty or (tier == 1 and "Easy" or (tier == 2 and "Medium" or "Hard"))
     return string.format("%s  [T%d / %s]", tostring(mp.name or "Mission"), tier, diff)
 end
 
-local function activeMissionTemplates()
+function activeMissionTemplates()
     ensureTemplateTiers()
     local active = {}
     for _, tpl in ipairs(missionTemplates) do
@@ -510,7 +507,7 @@ local function activeMissionTemplates()
 end
 
 -- Best-effort ground snapping.  BeamNG APIs differ by version/map, so every call is protected.
-local function snapToGround(pos, refPos)
+function snapToGround(pos, refPos)
     if not pos then return pos end
     local x, y = pos.x, pos.y
     local baseZ = (refPos and refPos.z) or pos.z or 0
@@ -538,7 +535,7 @@ local function snapToGround(pos, refPos)
     return vec3(x, y, best + 0.75)
 end
 
-local function findRoadSpawnPositionNear(origin, minDist, maxDist)
+function findRoadSpawnPositionNear(origin, minDist, maxDist)
     if not origin then return nil end
 
     local candidates = {}
@@ -570,7 +567,7 @@ local function findRoadSpawnPositionNear(origin, minDist, maxDist)
 end
 
 -- Screen-size helpers.  Never hardcode 1920x1080 positions; BeamNG can run at any resolution.
-local function getDisplaySize()
+function getDisplaySize()
     if im then
         local probes = {
             function() local io = im.GetIO and im.GetIO(); return io and io.DisplaySize end,
@@ -586,7 +583,7 @@ local function getDisplaySize()
     return 1920, 1080
 end
 
-local function anchoredPos(anchor, w, h, marginX, marginY)
+function anchoredPos(anchor, w, h, marginX, marginY)
     local sw, sh = getDisplaySize()
     marginX, marginY = marginX or 24, marginY or 24
     if anchor == "leftMiddle" then
@@ -603,7 +600,7 @@ local function anchoredPos(anchor, w, h, marginX, marginY)
     return im.ImVec2(marginX, marginY)
 end
 
-local function isGamePaused()
+function isGamePaused()
     local pauseProbes = {
         function() return be and be.isPaused and be:isPaused() end,
         function() return be and be.getPaused and be:getPaused() end,
@@ -621,7 +618,7 @@ end
 -- BeamNG extension callbacks usually provide both real dt and sim dt.
 -- Sim dt is the important one: it becomes 0 when paused and is scaled by slow-motion.
 -- If this build only passes one value, fall back to known sim-clock probes.
-local function getSafeMissionDt(dtReal, dtSim)
+function getSafeMissionDt(dtReal, dtSim)
     -- Hard pause guard. If the sim is paused, mission time is frozen.
     if isGamePaused() then return 0 end
 
@@ -651,12 +648,12 @@ local function getSafeMissionDt(dtReal, dtSim)
     return dtReal
 end
 
-local function setBigBanner(text, seconds)
+function setBigBanner(text, seconds)
     bigBannerText = text or ""
     bigBannerTimer = math.max(bigBannerTimer or 0, seconds or 3.0)
 end
 
-local function saveMissionStartHome()
+function saveMissionStartHome()
     local pv = getPlayerVehicle and getPlayerVehicle()
     if not pv then return end
     local pos = pv:getPosition()
@@ -675,7 +672,7 @@ local function saveMissionStartHome()
     pcall(function() if gameplay_recovery and gameplay_recovery.saveHome then gameplay_recovery.saveHome(pv:getID()) end end)
 end
 
-local function recoverPlayerToMissionStart()
+function recoverPlayerToMissionStart()
     local pv = getPlayerVehicle and getPlayerVehicle()
     if not pv or not missionStartHome or not missionStartHome.pos then return end
     local p = missionStartHome.pos
@@ -686,7 +683,7 @@ local function recoverPlayerToMissionStart()
     -- The previous build could leave the vehicle stuck in full reverse/full throttle.
     -- This only clears momentum/physics; it never writes throttle/brake/reverse inputs.
     pv:queueLuaCommand([[
-        local zero = vec3(0,0,0)
+        local zero = vec3({0,0,0})
         pcall(function() obj:setVelocity(zero) end)
         pcall(function() obj:setAngularVelocity(zero) end)
         pcall(function() obj:resetBrokenFlexMesh() end)
@@ -694,7 +691,7 @@ local function recoverPlayerToMissionStart()
     ]])
 end
 
-local function stopPlayerVehicle()
+function stopPlayerVehicle()
     local pv = getPlayerVehicle and getPlayerVehicle()
     if not pv then return end
     local pos = pv:getPosition()
@@ -702,7 +699,7 @@ local function stopPlayerVehicle()
     -- Save/recovery-home behavior is kept, but all direct input events are removed.
     pcall(function() pv:setPosition(vec3(pos.x, pos.y, pos.z + 0.35)) end)
     pv:queueLuaCommand([[
-        local zero = vec3(0,0,0)
+        local zero = vec3({0,0,0})
         pcall(function() obj:setVelocity(zero) end)
         pcall(function() obj:setAngularVelocity(zero) end)
         pcall(function() obj:resetBrokenFlexMesh() end)
@@ -711,7 +708,7 @@ local function stopPlayerVehicle()
 end
 
 -- Counts how many positions are needed (one per mission plus one extra per REACH for destPos).
-local function countNeededPositions()
+function countNeededPositions()
     local n = 0
     for _, tpl in ipairs(activeMissionTemplates()) do
         n = n + 1
@@ -721,7 +718,7 @@ local function countNeededPositions()
 end
 
 -- Builds the missionPoints table from templates using the given list of road positions.
-local function buildMissionPointsFromPositions(positions)
+function buildMissionPointsFromPositions(positions)
     missionPoints = {}
     local idx = 1
     for _, tpl in ipairs(activeMissionTemplates()) do
@@ -746,7 +743,7 @@ local function buildMissionPointsFromPositions(positions)
 end
 
 -- Builds the missionPoints table using hardcoded fallback coordinates.
-local function buildMissionPointsFallback()
+function buildMissionPointsFallback()
     missionPoints = {}
     for _, tpl in ipairs(activeMissionTemplates()) do
         local mp = {
@@ -768,7 +765,7 @@ local function buildMissionPointsFallback()
 end
 
 -- Attempts to place missions on valid road positions.  Returns true on success.
-local function tryInitMissions()
+function tryInitMissions()
     local needed    = countNeededPositions()
     local positions = findRandomRoadPositions(needed, MIN_MISSION_SPACING)
 
@@ -786,7 +783,7 @@ getPlayerVehicle = function()
     return be:getPlayerVehicle(0)
 end
 
-local function forcePlayerFocus()
+function forcePlayerFocus()
     local pv = getPlayerVehicle()
     if not pv then return end
 
@@ -799,11 +796,11 @@ local function forcePlayerFocus()
     end
 end
 
-local function armFocusReturn(seconds)
+function armFocusReturn(seconds)
     focusReturnTimer = math.max(focusReturnTimer or 0, seconds or 1.0)
 end
 
-local function showLoader(label)
+function showLoader(label)
     loaderActive = true
     loaderLabel = label or "Loading..."
     if guihooks then
@@ -813,17 +810,17 @@ local function showLoader(label)
     end
 end
 
-local function hideLoaderSoon(seconds)
+function hideLoaderSoon(seconds)
     loaderHideTimer = math.max(loaderHideTimer or 0, seconds or 0.75)
 end
 
-local function getPlayerPos()
+function getPlayerPos()
     local v = getPlayerVehicle()
     if not v then return nil end
     return v:getPosition()
 end
 
-local function getVehicleSpeed(veh)
+function getVehicleSpeed(veh)
     if not veh then return nil end
     local probes = {
         function() local v = veh:getVelocity(); return v and v:length() end,
@@ -837,21 +834,21 @@ local function getVehicleSpeed(veh)
     return nil
 end
 
-local function addSpawnedVehicle(id, role)
+function addSpawnedVehicle(id, role)
     if not id then return end
     local vd = { id = id, role = role }
     if role == "police" then vd.recycleCooldown = POLICE_RECYCLE_GRACE end
     table.insert(spawnedVehicles, vd)
 end
 
-local function notify(msgType, title, msg)
+function notify(msgType, title, msg)
     guihooks.trigger("toastrMsg", { type = msgType, title = title, msg = msg })
 end
 
 -- Builds the VE-side Lua command string that checks vehicle damage and fires a GE
 -- callback.  obj:getDamage() is wrapped in pcall because the method was removed in
 -- newer BeamNG versions; the fallback reads obj.damage as a direct field.
-local function makeDamageCheckCmd(threshold, vehicleId)
+function makeDamageCheckCmd(threshold, vehicleId)
     return string.format([[
         local function readDamage()
             local d = 0
@@ -873,7 +870,7 @@ local function makeDamageCheckCmd(threshold, vehicleId)
 end
 
 -- Same as above but fires reportFollowTargetDamaged (FOLLOW missions).
-local function makeFollowDamageCheckCmd(threshold, vehicleId)
+function makeFollowDamageCheckCmd(threshold, vehicleId)
     return string.format([[
         local function readDamage()
             local d = 0
@@ -896,7 +893,7 @@ end
 
 -- VE-side command that checks the *player* vehicle's damage and fires
 -- reportPlayerWrecked when the threshold is exceeded (ESCAPE/ENDURE/REACH).
-local function makePlayerDamageCheckCmd(threshold)
+function makePlayerDamageCheckCmd(threshold)
     return string.format([[
         local d = 0
         local ok, v = pcall(function() return obj:getDamage() end)
@@ -919,7 +916,7 @@ end
 -- Experimental player-body/driver-seat health probe. This is intentionally safe:
 -- if the current BeamNG build does not expose node/local position data here, it reports nothing.
 -- Later, when the pedestrian/unicycle body has its own health, this can be replaced with a real body HP callback.
-local function makeDriverSeatHealthProbeCmd()
+function makeDriverSeatHealthProbeCmd()
     return [[
         local severity = 0
         local function bump(v) if type(v) == 'number' and v > severity then severity = v end end
@@ -965,7 +962,7 @@ end
 
 -- Returns an 8-point compass abbreviation for a world-space (dx, dy) vector.
 -- Axis convention: +X = East, +Y = North (standard BeamNG world coordinates).
-local function compassDir(dx, dy)
+function compassDir(dx, dy)
     local angle = math.atan2(dy, dx) * (180 / math.pi)
     if angle < 0 then angle = angle + 360 end
     local dirs = { "E", "NE", "N", "NW", "W", "SW", "S", "SE" }
@@ -975,15 +972,12 @@ end
 
 -- Spawns one police/pursuer at a random position around playerPos and sets its AI.
 -- Returns the spawned vehicle object, or nil on failure.
-local function buildSpawnOptions(choice, spawnPos)
+function buildSpawnOptions(choice, spawnPos)
     local opts = {
         pos = spawnPos,
         rot = quat(0, 0, 0, 1),
         autoEnterVehicle = false,
     }
-    if choice and choice.model and choice.model ~= "" then
-        opts.model = choice.model
-    end
     if choice and choice.config and choice.config ~= "" then
         opts.config = choice.config
     end
@@ -995,7 +989,7 @@ end
 
 -- Spawns one police/pursuer at a random position around playerPos and sets its AI.
 -- Returns the spawned vehicle object, or nil on failure.
-local function spawnPoliceVehicle(playerPos, playerID)
+function spawnPoliceVehicle(playerPos, playerID)
     if not POLICE_VARIANTS or #POLICE_VARIANTS == 0 then
         log("E", "jonesingMissions", "POLICE_VARIANTS is missing or empty.")
         return nil
@@ -1051,7 +1045,7 @@ local function spawnPoliceVehicle(playerPos, playerID)
 end
 
 -- ── Beacon rendering ───────────────────────────────────────────────────────────
-local function adaptiveLabelZ(basePos, playerPos, above)
+function adaptiveLabelZ(basePos, playerPos, above)
     if not basePos then return above end
     if not playerPos then return basePos.z + above + 6 end
     local d = basePos:distance(playerPos)
@@ -1060,7 +1054,7 @@ local function adaptiveLabelZ(basePos, playerPos, above)
 end
 
 -- Draws a GTA-style vertical beacon column.
-local function drawBeacon(mp, col)
+function drawBeacon(mp, col)
     local cx   = mp.pos.x
     local cy   = mp.pos.y
     local cz   = mp.pos.z
@@ -1088,7 +1082,7 @@ local function drawBeacon(mp, col)
 end
 
 -- Draws the REACH destination beacon — a bright white full pillar at destPos.
-local function drawDestBeacon(destPos, pulse)
+function drawDestBeacon(destPos, pulse)
     local cx   = destPos.x
     local cy   = destPos.y
     local cz   = destPos.z
@@ -1116,11 +1110,11 @@ local function drawDestBeacon(destPos, pulse)
     debugDrawer:drawSphere(vec3(cx, cy, topZ), REACH_RADIUS * 0.35, col)
 end
 
-local cleanupMission
-local wantedLevelForMission
+cleanupMission = nil
+wantedLevelForMission = nil
 
 -- ── Mission start helpers ──────────────────────────────────────────────────────
-local function startChase(point, playerPos)
+function startChase(point, playerPos)
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
     local playerID = playerVeh:getID()
@@ -1172,7 +1166,7 @@ local function startChase(point, playerPos)
     end
 end
 
-local function startEscape(point, playerPos)
+function startEscape(point, playerPos)
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
     local playerID = playerVeh:getID()
@@ -1205,7 +1199,7 @@ local function startEscape(point, playerPos)
 
 end
 
-local function startFollow(point, playerPos)
+function startFollow(point, playerPos)
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
 
@@ -1250,7 +1244,7 @@ local function startFollow(point, playerPos)
     end
 end
 
-local function startEndure(point, playerPos)
+function startEndure(point, playerPos)
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
     local playerID = playerVeh:getID()
@@ -1283,7 +1277,7 @@ local function startEndure(point, playerPos)
             
 end
 
-local function startReach(point, playerPos)
+function startReach(point, playerPos)
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
     local playerID = playerVeh:getID()
@@ -1319,7 +1313,7 @@ end
 -- Generates `count` random waypoints around a starting position, each within
 -- RALLY_WAYPOINT_SPREAD of the previous.  Uses the road graph if available,
 -- otherwise falls back to purely random offsets.
-local function generateRallyWaypoints(startPos, count)
+function generateRallyWaypoints(startPos, count)
     local waypoints = {}
     local prevPos   = startPos
 
@@ -1354,7 +1348,7 @@ local function generateRallyWaypoints(startPos, count)
     return waypoints
 end
 
-local function startRally(point, playerPos)
+function startRally(point, playerPos)
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
 
@@ -1372,7 +1366,7 @@ local function startRally(point, playerPos)
             waypointCount, RALLY_BONUS_TIME))
 end
 
-local function startCruise(point, playerPos)
+function startCruise(point, playerPos)
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
 
@@ -1387,80 +1381,200 @@ local function startCruise(point, playerPos)
             CRUISE_TIME_LIMIT))
 end
 
-local function buildRaceAiCommand(waypoints)
-    local cmd = { "local wpTargetList = {}" }
-    for i, waypoint in ipairs(waypoints or {}) do
-        if waypoint then
-            cmd[#cmd + 1] = string.format(
-                "wpTargetList[%d] = vec3({x=%0.6f,y=%0.6f,z=%0.6f})",
-                i, waypoint.x, waypoint.y, waypoint.z)
-        end
+function tableSize(t)
+    local n = 0
+    for _ in pairs(t or {}) do n = n + 1 end
+    return n
+end
+
+function freezeRaceBaitVehicle(veh)
+    if not veh then return end
+    veh:queueLuaCommand([[
+        pcall(function() ai.setMode('disabled') end)
+        pcall(function() electrics.values.throttle = 0 end)
+        pcall(function() electrics.values.brake = 1 end)
+        pcall(function() electrics.values.parkingbrake = 1 end)
+        local zero = vec3({0,0,0})
+        pcall(function() obj:setVelocity(zero) end)
+        pcall(function() obj:setAngularVelocity(zero) end)
+    ]])
+end
+
+function spawnRaceBaitVehicle(waypoint, racerIndex)
+    if not waypoint then return nil end
+
+    -- This bait vehicle exists only so race AI can use the same reliable
+    -- object-chase behavior as police. It is buried slightly below the checkpoint
+    -- and frozen so the racer has an object ID to chase without a visible target car
+    -- sitting in the road.
+    local baitPos = vec3({
+        waypoint.x,
+        waypoint.y,
+        waypoint.z - 4.0
+    })
+
+    local veh = core_vehicles.spawnNewVehicle("covet", {
+        pos = baitPos,
+        rot = quat(0, 0, 0, 1),
+        color = "0 0 0 0",
+        autoEnterVehicle = false,
+    })
+
+    if veh then
+        freezeRaceBaitVehicle(veh)
+        log("I", "jonesingMissions",
+            string.format("Race bait spawned for racer %s at checkpoint target", tostring(racerIndex or "?")))
+    else
+        log("W", "jonesingMissions", "Race bait spawn failed.")
     end
-    cmd[#cmd + 1] = "ai.driveUsingPath({wpTargetList = wpTargetList, noOfLaps = 1, aggression = 0.9, avoidCars = 'on'})"
-    cmd[#cmd + 1] = "ai.setRacing(true)"
-    cmd[#cmd + 1] = "ai.setParameters({turnForceCoef = 4, awarenessForceCoef = 0.15})"
-    return table.concat(cmd, "; ")
+
+    return veh
 end
 
-local function configureRaceAI(veh, waypoints)
-    if not veh or not waypoints or #waypoints == 0 then return end
-    veh:queueLuaCommand(buildRaceAiCommand(waypoints))
+function moveRaceBaitToWaypoint(baitId, waypoint)
+    if not baitId or not waypoint then return end
+
+    local bait = scenetree.findObjectById(baitId) or be:getObjectByID(baitId)
+    if not bait then return end
+
+    local baitPos = vec3({
+        waypoint.x,
+        waypoint.y,
+        waypoint.z - 4.0
+    })
+
+    pcall(function() bait:setPosition(baitPos) end)
+    freezeRaceBaitVehicle(bait)
 end
 
-local function spawnRaceVehicle(playerPos)
+function queueRaceChaseBaitAI(veh, baitId)
+    if not veh or not baitId then return end
+
+    -- This intentionally mirrors the working police logic: chase an object ID,
+    -- drive out of lane, and be aggressive. The bait car is moved per-racer to
+    -- that racer's next checkpoint.
+    veh:queueLuaCommand(string.format([[
+        pcall(function() ai.setMode('chase') end)
+        pcall(function() ai.setTargetObjectID(%d) end)
+        pcall(function() ai.driveInLane('off') end)
+        pcall(function() ai.setSpeedMode('set') end)
+        pcall(function() ai.setSpeed(55) end)
+        pcall(function() ai.setAggressionMode('rubberBand') end)
+        pcall(function() ai.setParameters({turnForceCoef = 5, awarenessForceCoef = 0.02}) end)
+    ]], baitId))
+end
+
+function spawnRaceVehicle(playerVeh, racerIndex)
+    if not playerVeh then return nil end
     if not RACE_VARIANTS or #RACE_VARIANTS == 0 then
         log("E", "jonesingMissions", "RACE_VARIANTS is missing or empty.")
         return nil
     end
 
-    local spawnPos = findRoadSpawnPositionNear(playerPos, RACE_SPAWN_RADIUS.min, RACE_SPAWN_RADIUS.max)
-    if not spawnPos then return nil end
-    local choice = RACE_VARIANTS[math.random(1, #RACE_VARIANTS)]
+    local choice = RACE_VARIANTS[((racerIndex - 1) % #RACE_VARIANTS) + 1]
     if not choice or not choice.model then return nil end
 
-    log("I", "jonesingMissions",
-        string.format("Race spawn: %s model=%s config=%s",
-            tostring(choice.label or "?"),
-            tostring(choice.model),
-            tostring(choice.config)))
+    local playerPos = playerVeh:getPosition()
+    local rot = quat(0, 0, 0, 1)
+    pcall(function() rot = playerVeh:getRotation() end)
 
-    return core_vehicles.spawnNewVehicle(choice.model, buildSpawnOptions(choice, spawnPos))
+    -- Spawn racers right beside/behind the player. The marker already put the
+    -- player on the route, so avoid road-node searches that fail on Grid/Test Map.
+    local sideOffsets = { -4, 4, -8, 8, -12, 12 }
+    local side = sideOffsets[racerIndex] or ((racerIndex - 1) * 4)
+    local back = 4 + (math.floor((racerIndex - 1) / 2) * 4)
+
+    local right = vec3({1, 0, 0})
+    local forward = vec3({0, 1, 0})
+    pcall(function()
+        right = rot * vec3({1, 0, 0})
+        forward = rot * vec3({0, 1, 0})
+    end)
+
+    local spawnPos = vec3({
+        playerPos.x + right.x * side - forward.x * back,
+        playerPos.y + right.y * side - forward.y * back,
+        playerPos.z + 0.75
+    })
+
+    log("I", "jonesingMissions",
+        string.format("Race spawn: %s model=%s beside player",
+            tostring(choice.label or "?"),
+            tostring(choice.model)))
+
+    return core_vehicles.spawnNewVehicle(choice.model, {
+        pos = spawnPos,
+        rot = rot,
+        color = choice.color,
+        autoEnterVehicle = false,
+    })
 end
 
-local function startRace(point, playerPos)
+function startRace(point, playerPos)
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
 
     local waypointCount = point.waypointCount or RACE_CHECKPOINT_COUNT
+
     mission.rallyWaypoints = generateRallyWaypoints(playerPos, waypointCount)
     mission.rallyCurrentIdx = 1
     mission.raceRacers = {}
     mission.raceFinishCount = 0
 
     for i = 1, RACE_RACER_COUNT do
-        local veh = spawnRaceVehicle(playerPos)
-        if veh then
+        local veh = spawnRaceVehicle(playerVeh, i)
+        local firstWp = mission.rallyWaypoints and mission.rallyWaypoints[1]
+        local bait = spawnRaceBaitVehicle(firstWp, i)
+
+        if veh and bait then
             local vid = veh:getID()
-            addSpawnedVehicle(vid, "racer")
-            mission.raceRacers[vid] = { idx = 1, finished = false }
-            configureRaceAI(veh, mission.rallyWaypoints)
+            local baitId = bait:getID()
+            if vid and baitId then
+                addSpawnedVehicle(vid, "racer")
+                addSpawnedVehicle(baitId, "raceBait")
+                mission.raceRacers[vid] = {
+                    idx = 1,
+                    finished = false,
+                    baitId = baitId,
+                    lastAiTargetIdx = 0,
+                }
+                moveRaceBaitToWaypoint(baitId, firstWp)
+                queueRaceChaseBaitAI(veh, baitId)
+                mission.raceRacers[vid].lastAiTargetIdx = 1
+            end
+        elseif veh then
+            local vid = veh:getID()
+            if vid then addSpawnedVehicle(vid, "racer") end
+        elseif bait then
+            local baitId = bait:getID()
+            if baitId then addSpawnedVehicle(baitId, "raceBait") end
         end
+    end
+
+    local racerCount = tableSize(mission.raceRacers or {})
+
+    if racerCount == 0 then
+        cleanupMission(false, "No race opponents or race bait targets could spawn.")
+        return
     end
 
     forcePlayerFocus()
     armFocusReturn(1.5)
+
     notify("info",
         "MISSION: " .. missionDisplayName(point),
         string.format(
-            "A %d-checkpoint street race is on! %d rival%s are heading for the checkpoints in order. " ..
+            "A %d-checkpoint street race is on! %d rival%s are chasing hidden checkpoint bait targets. " ..
             "No timer: first to the final checkpoint wins.",
             waypointCount,
-            tableSize(mission.raceRacers or {}),
-            tableSize(mission.raceRacers or {}) == 1 and "" or "s"))
+            racerCount,
+            racerCount == 1 and "" or "s"
+        )
+    )
 end
 
 -- ── Mission lifecycle ──────────────────────────────────────────────────────────
-local function runMissionStart(point, playerPos)
+function runMissionStart(point, playerPos)
     stopPlayerVehicle()
     if     point.type == CHASE  then startChase (point, playerPos)
     elseif point.type == ESCAPE then startEscape(point, playerPos)
@@ -1484,7 +1598,7 @@ local function runMissionStart(point, playerPos)
 end
 
 -- ── Mission lifecycle ──────────────────────────────────────────────────────────
-local function startMission(point)
+function startMission(point)
     if mission then return end
 
     local playerPos = getPlayerPos()
@@ -1519,7 +1633,7 @@ local function startMission(point)
     forcePlayerFocus()
 end
 
-local function tickPendingMissionStart(dt, playerPos)
+function tickPendingMissionStart(dt, playerPos)
     if not mission or not mission.starting then return false end
 
     -- Do not let success/fail logic run while the target/police have not spawned yet.
@@ -1575,7 +1689,7 @@ end
 
 -- ── Shared HUD helpers ─────────────────────────────────────────────────────────
 -- Returns the distance from the player to the first alive "target" vehicle, or nil.
-local function getTargetDist(playerPos)
+function getTargetDist(playerPos)
     if not playerPos then return nil end
     for _, vd in ipairs(spawnedVehicles) do
         if vd.role == "target" then
@@ -1587,7 +1701,7 @@ local function getTargetDist(playerPos)
 end
 
 -- Counts how many spawned police objects still exist in the scene.
-local function countAlivePolice()
+function countAlivePolice()
     local n = 0
     for _, vd in ipairs(spawnedVehicles) do
         if vd.role == "police" and be:getObjectByID(vd.id) then
@@ -1598,7 +1712,7 @@ local function countAlivePolice()
 end
 
 -- Returns the ImGui type-tag string and colour for a mission type.
-local function typeStyle(mtype)
+function typeStyle(mtype)
     if mtype == CHASE  then return "C", im.ImVec4(1.0,  0.55, 0.15, 1.0) end
     if mtype == ESCAPE then return "E", im.ImVec4(0.25, 0.55, 1.0,  1.0) end
     if mtype == FOLLOW then return "F", im.ImVec4(0.10, 0.90, 0.55, 1.0) end
@@ -1611,7 +1725,7 @@ local function typeStyle(mtype)
 end
 
 
-local function formatMeters(dist)
+function formatMeters(dist)
     if not dist then return "??" end
     if dist < DIST_KM_THRESHOLD then
         return string.format("%d m", math.floor(dist))
@@ -1619,7 +1733,7 @@ local function formatMeters(dist)
     return string.format("%.1f km", dist / DIST_KM_THRESHOLD)
 end
 
-local function getRoleVehicleInfo(playerPos, role)
+function getRoleVehicleInfo(playerPos, role)
     if not playerPos then return nil end
     for _, vd in ipairs(spawnedVehicles) do
         if vd.role == role then
@@ -1638,7 +1752,7 @@ local function getRoleVehicleInfo(playerPos, role)
     return nil
 end
 
-local function getClosestPoliceInfo(playerPos)
+function getClosestPoliceInfo(playerPos)
     if not playerPos then return nil end
     local best = nil
     for _, vd in ipairs(spawnedVehicles) do
@@ -1661,7 +1775,7 @@ local function getClosestPoliceInfo(playerPos)
     return best
 end
 
-local function getClosestRacerInfo(playerPos)
+function getClosestRacerInfo(playerPos)
     if not playerPos then return nil end
     local best = nil
     for _, vd in ipairs(spawnedVehicles) do
@@ -1692,7 +1806,7 @@ wantedLevelForMission = function(mtype)
     return 0
 end
 
-local function wantedStars(level)
+function wantedStars(level)
     local s = ""
     for i = 1, 5 do
         s = s .. (i <= level and "*" or "-")
@@ -1700,7 +1814,7 @@ local function wantedStars(level)
     return s
 end
 
-local function missionInstruction(mtype)
+function missionInstruction(mtype)
     if mtype == CHASE then return "Wreck or immobilize the target." end
     if mtype == ESCAPE then return "Put distance between you and every officer." end
     if mtype == FOLLOW then return "Stay close, but do not hit the target." end
@@ -1713,7 +1827,7 @@ local function missionInstruction(mtype)
 end
 
 -- ── ImGui HUD panel ────────────────────────────────────────────────────────────
-local function drawHUD()
+function drawHUD()
     if not im then return end
     local playerPos = getPlayerPos()
     if not playerPos then return end
@@ -1880,9 +1994,9 @@ local function drawHUD()
 end
 
 
-local imguiColor
+imguiColor = nil
 
-local function drawLoaderOverlay()
+function drawLoaderOverlay()
     if not im or not loaderActive then return end
     im.SetNextWindowSize(im.ImVec2(520, 120), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("center", 520, 120, 24, 24), im.Cond_Always)
@@ -1897,7 +2011,7 @@ local function drawLoaderOverlay()
     im.End()
 end
 
-local function drawBottomBanner(playerPos)
+function drawBottomBanner(playerPos)
     if not im then return end
     local text = bigBannerText
     if (not text or text == "") and mission and not mission.starting then
@@ -1923,12 +2037,12 @@ function imguiColor(r, g, b, a)
     return 0xffffffff
 end
 
-local function addRadarBlip(items, label, pos, color, playerPos)
+function addRadarBlip(items, label, pos, color, playerPos)
     if not pos or not playerPos then return end
     table.insert(items, { label = label, pos = pos, color = color or {1,1,1,1}, dist = playerPos:distance(pos) })
 end
 
-local function drawRadarGlyph(sx, sy, text, color)
+function drawRadarGlyph(sx, sy, text, color)
     if not im or not im.SetCursorScreenPos then return end
     local r, g, b, a = color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 1
     pcall(function()
@@ -1939,7 +2053,7 @@ local function drawRadarGlyph(sx, sy, text, color)
     end)
 end
 
-local function drawRadarPoint(drawList, cx, cy, px, py, radius, item)
+function drawRadarPoint(drawList, cx, cy, px, py, radius, item)
     local r, g, b, a = item.color[1], item.color[2], item.color[3], item.color[4] or 1
     local edge = math.sqrt(px * px + py * py)
     if edge > radius then
@@ -1963,7 +2077,7 @@ local function drawRadarPoint(drawList, cx, cy, px, py, radius, item)
     drawRadarGlyph(sx, sy, item.label or "*", { r, g, b, a })
 end
 
-local function drawRadarPlayerGlyph(cx, cy)
+function drawRadarPlayerGlyph(cx, cy)
     if not im or not im.SetCursorScreenPos then return end
     pcall(function()
         im.SetCursorScreenPos(im.ImVec2(cx - 8, cy - 11))
@@ -1975,7 +2089,7 @@ local function drawRadarPlayerGlyph(cx, cy)
     end)
 end
 
-local function getCameraForwardVectorFallback()
+function getCameraForwardVectorFallback()
     local probes = {
         function() return core_camera and core_camera.getForward and core_camera.getForward() end,
         function() return core_camera and core_camera.getForwardVector and core_camera.getForwardVector() end,
@@ -1993,7 +2107,7 @@ local function getCameraForwardVectorFallback()
     return vec3(0, 1, 0)
 end
 
-local function drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading)
+function drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading)
     if not drawList or not playerPos then return end
     local roadCol = imguiColor(0.55, 0.62, 0.68, 0.55)
     local scale = radius / RADAR_RANGE_METERS
@@ -2042,7 +2156,7 @@ local function drawRadarRoadOverlay(drawList, cx, cy, radius, playerPos, heading
 end
 
 
-local function drawPlayerRadarArrow(drawList, cx, cy, radarHeading)
+function drawPlayerRadarArrow(drawList, cx, cy, radarHeading)
     if not drawList then return end
     local pv = getPlayerVehicle and getPlayerVehicle()
     local dir = nil
@@ -2065,11 +2179,11 @@ local function drawPlayerRadarArrow(drawList, cx, cy, radarHeading)
     pcall(function() drawList:AddText(im.ImVec2(cx - 24, cy + 18), imguiColor(0.70,1.0,0.70,1.0), 'YOU') end)
 end
 
-local function compassFromAngle(angle)
+function compassFromAngle(angle)
     return compassDir(math.cos(angle), math.sin(angle))
 end
 
-local function drawRadar(playerPos)
+function drawRadar(playerPos)
     if not im or not playerPos then return end
     local w, h = RADAR_WINDOW_SIZE, RADAR_WINDOW_SIZE
     im.SetNextWindowSize(im.ImVec2(w, h), im.Cond_Always)
@@ -2179,7 +2293,7 @@ local function drawRadar(playerPos)
     im.End()
 end
 
-local function drawTargetArrows(playerPos)
+function drawTargetArrows(playerPos)
     if not mission or not playerPos then return end
     if mission.point.type ~= CHASE and mission.point.type ~= FOLLOW then return end
     local pulse = 0.5 + 0.5 * math.sin(pulseTime * 5.0)
@@ -2217,7 +2331,7 @@ local function drawTargetArrows(playerPos)
     end
 end
 
-local function drawJonesingUI()
+function drawJonesingUI()
     -- Hide all custom UI while paused/menu is open. This keeps the pause/menu screen clean.
     if isGamePaused() then return end
     local playerPos = getPlayerPos()
@@ -2230,7 +2344,7 @@ end
 -- ── Success conditions ─────────────────────────────────────────────────────────
 -- Chase success: target is destroyed (damage threshold) OR target has been
 -- immobilised for CHASE_STOPPED_TIME seconds (speed near zero).
-local function checkChaseSuccess()
+function checkChaseSuccess()
     -- Startup guard: never pass chase before the target exists.
     if not mission or mission.starting or not mission.started then
         return false
@@ -2267,7 +2381,7 @@ end
 
 -- Tracks the chase target's speed by comparing positions between frames.
 -- Updates targetStoppedSecs (accumulated time the target has been near-stationary).
-local function tickChaseTargetSpeed(dt)
+function tickChaseTargetSpeed(dt)
     if mission and (mission.chaseStoppedCooldown or 0) > 0 then
         mission.chaseStoppedCooldown = math.max(0, (mission.chaseStoppedCooldown or 0) - dt)
         targetLastPos = nil
@@ -2305,7 +2419,7 @@ local function tickChaseTargetSpeed(dt)
     end
 end
 
-local function checkEscapeSuccess()
+function checkEscapeSuccess()
     local playerPos = getPlayerPos()
     if not playerPos then return false end
     if not mission or (mission.policeSpawned or 0) == 0 then return false end
@@ -2322,7 +2436,7 @@ end
 
 -- Ticks the FOLLOW mission for one frame.
 -- Returns "success", "fail:<reason>", or nil to keep going.
-local function tickFollow(playerPos, dt)
+function tickFollow(playerPos, dt)
     if not playerPos then return nil end
 
     -- Immunity period: no "too close" detection for the first FOLLOW_IMMUNITY seconds
@@ -2390,7 +2504,7 @@ end
 -- mission start and recycled in-place thereafter — no new vehicles are ever created.
 -- Teleport position is biased ahead of the player's facing direction so police don't
 -- visibly pop in right beside the camera.
-local function tickTeleportPolice(playerPos, dt)
+function tickTeleportPolice(playerPos, dt)
     if not mission or not playerPos then return end
     local playerVeh = getPlayerVehicle()
     if not playerVeh then return end
@@ -2426,8 +2540,8 @@ local function tickTeleportPolice(playerPos, dt)
                     vd.recycleCooldown = POLICE_RECYCLE_GRACE
                     v:queueLuaCommand(
                         "obj:resetBrokenFlexMesh(); " ..
-                        "pcall(function() obj:setVelocity(vec3(0,0,0)) end); " ..
-                        "pcall(function() obj:setAngularVelocity(vec3(0,0,0)) end); " ..
+                        "pcall(function() obj:setVelocity(vec3({0,0,0})) end); " ..
+                        "pcall(function() obj:setAngularVelocity(vec3({0,0,0})) end); " ..
                         "ai.setMode('chase'); ai.setTargetObjectID(" .. tostring(playerID) .. "); ai.driveInLane('off')"
                     )
                 end
@@ -2438,7 +2552,7 @@ end
 
 -- Periodically queues a VE-side damage check on the player's vehicle.
 -- If playerWrecked is already set, returns true (caller should fail the mission).
-local function tickPlayerDamage(dt)
+function tickPlayerDamage(dt)
     if playerWrecked then return true end
 
     mission.playerDmgTimer = (mission.playerDmgTimer or 0) + dt
@@ -2454,7 +2568,7 @@ local function tickPlayerDamage(dt)
 end
 
 
-local function tickPoliceBustedFail(playerPos, dt)
+function tickPoliceBustedFail(playerPos, dt)
     if not mission or not playerPos then return false end
     local mtype = mission.point and mission.point.type
     if not wantedLevelForMission or wantedLevelForMission(mtype) <= 0 then
@@ -2480,7 +2594,7 @@ local function tickPoliceBustedFail(playerPos, dt)
     return false
 end
 
-local function showMissionHudMessage(dt, playerPos)
+function showMissionHudMessage(dt, playerPos)
     if not mission or not playerPos or mission.starting then return end
 
     hudMsgTimer = (hudMsgTimer or 0) + dt
@@ -2763,6 +2877,11 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                         local idx = state.idx or 1
                         local wp = mission.rallyWaypoints and mission.rallyWaypoints[idx]
                         if wp then
+                            if state.lastAiTargetIdx ~= idx then
+                                moveRaceBaitToWaypoint(state.baitId, wp)
+                                queueRaceChaseBaitAI(v, state.baitId)
+                                state.lastAiTargetIdx = idx
+                            end
                             local pos = v:getPosition()
                             local dx = pos.x - wp.x
                             local dy = pos.y - wp.y
@@ -2773,6 +2892,13 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                                     return true
                                 else
                                     state.idx = idx + 1
+                                    state.lastAiTargetIdx = 0
+                                    local nextWp = mission.rallyWaypoints[state.idx]
+                                    if nextWp then
+                                        moveRaceBaitToWaypoint(state.baitId, nextWp)
+                                        queueRaceChaseBaitAI(v, state.baitId)
+                                        state.lastAiTargetIdx = state.idx
+                                    end
                                 end
                             end
                         end
@@ -2885,7 +3011,7 @@ function M.onUpdate(dt, dtSim)
 end
 
 -- ── Extension hooks ────────────────────────────────────────────────────────────
-local function onExtensionLoaded()
+function onExtensionLoaded()
     loadAutosave()
     initialized = false
     initTimer = 0
@@ -2893,7 +3019,7 @@ local function onExtensionLoaded()
         "Jonesing GTA-like Mission System loaded — " .. #missionTemplates .. " total templates registered; runtime tiers enabled.")
 end
 
-local function onExtensionUnloaded()
+function onExtensionUnloaded()
     saveAutosave("extension_unload")
     cleanupMission(false)
     log("I", "jonesingMissions", "Jonesing Mission System unloaded.")
