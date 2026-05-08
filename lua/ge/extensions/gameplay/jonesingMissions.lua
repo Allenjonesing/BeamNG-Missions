@@ -205,6 +205,8 @@ ENDURE_TIME_LIMIT = 120     -- seconds to survive recycling police = success
 ENDURE_RECYCLE_DIST = 300    -- police beyond this from the player are teleported back
 POLICE_TELEPORT_RADIUS = { min = 200, max = 300 }   -- far-ahead recycle placement; grace prevents instant re-recycle
 POLICE_TELEPORT_INTERVAL = 2.5    -- seconds between recycle-teleport checks
+POLICE_FORWARD_CONE = math.pi * 0.55    -- half-angle (~99°) of the forward arc used when selecting a road spawn node
+POLICE_ROADBLOCK_CHANCE = 0.25          -- probability a recycled police unit is placed as a stationary roadblock
 
 -- REACH mission tuning
 REACH_TIME_LIMIT = 180    -- seconds to reach destination before failing
@@ -564,6 +566,62 @@ function findRoadSpawnPositionNear(origin, minDist, maxDist)
 
     if #candidates == 0 then return nil end
     return snapToGround(candidates[math.random(1, #candidates)], origin)
+end
+
+-- Like findRoadSpawnPositionNear but restricts candidates to road nodes within a forward
+-- cone around playerDir (2-D, zero-length vectors fall back to findRoadSpawnPositionNear).
+-- Falls back to any in-range node if the cone contains no candidates.
+function findRoadSpawnPositionAhead(origin, playerDir, minDist, maxDist, coneHalfAngle)
+    if not origin or not playerDir then
+        return findRoadSpawnPositionNear(origin, minDist, maxDist)
+    end
+    coneHalfAngle = coneHalfAngle or POLICE_FORWARD_CONE
+
+    local pool = radarRoadPositions
+    if not pool or #pool == 0 then
+        local ok, gp = pcall(function() return map and map.getGraphpath and map.getGraphpath() end)
+        if ok and gp and type(gp.positions) == "table" then
+            pool = {}
+            for _, pos in pairs(gp.positions) do
+                if pos and type(pos.x) == "number" and type(pos.y) == "number" and type(pos.z) == "number" then
+                    table.insert(pool, vec3(pos.x, pos.y, pos.z))
+                end
+            end
+        end
+    end
+    if not pool or #pool == 0 then return nil end
+
+    local pdLen = math.sqrt(playerDir.x * playerDir.x + playerDir.y * playerDir.y)
+    if pdLen < 0.001 then
+        return findRoadSpawnPositionNear(origin, minDist, maxDist)
+    end
+    local pdx = playerDir.x / pdLen
+    local pdy = playerDir.y / pdLen
+    local cosHalf = math.cos(coneHalfAngle)
+
+    local ahead = {}
+    local any   = {}
+    for _, pos in ipairs(pool) do
+        local dx   = pos.x - origin.x
+        local dy   = pos.y - origin.y
+        local dist = math.sqrt(dx * dx + dy * dy)
+        if dist >= minDist and dist <= maxDist then
+            table.insert(any, pos)
+            local dot = (dx / dist) * pdx + (dy / dist) * pdy
+            if dot >= cosHalf then
+                table.insert(ahead, pos)
+            end
+        end
+    end
+
+    local chosen
+    if #ahead > 0 then
+        chosen = ahead[math.random(1, #ahead)]
+    elseif #any > 0 then
+        chosen = any[math.random(1, #any)]
+    end
+    if not chosen then return nil end
+    return snapToGround(chosen, origin)
 end
 
 -- Screen-size helpers.  Never hardcode 1920x1080 positions; BeamNG can run at any resolution.
@@ -987,22 +1045,31 @@ function buildSpawnOptions(choice, spawnPos)
     return opts
 end
 
--- Spawns one police/pursuer at a random position around playerPos and sets its AI.
+-- Spawns one police/pursuer biased toward the player's forward direction and sets its AI.
+-- playerDir is optional; when provided road selection prefers the forward cone.
 -- Returns the spawned vehicle object, or nil on failure.
-function spawnPoliceVehicle(playerPos, playerID)
+function spawnPoliceVehicle(playerPos, playerID, playerDir)
     if not POLICE_VARIANTS or #POLICE_VARIANTS == 0 then
         log("E", "jonesingMissions", "POLICE_VARIANTS is missing or empty.")
         return nil
     end
 
-    local angle = math.random() * 2 * math.pi
+    -- Compute a directional fallback position biased toward playerDir when available.
+    local baseAngle
+    if playerDir then
+        local pdLen = math.sqrt(playerDir.x * playerDir.x + playerDir.y * playerDir.y)
+        if pdLen > 0.001 then
+            baseAngle = math.atan2(playerDir.y, playerDir.x) + (math.random() - 0.5) * math.pi * 0.6
+        end
+    end
+    if not baseAngle then baseAngle = math.random() * 2 * math.pi end
     local dist = math.random(POLICE_SPAWN_RADIUS.min, POLICE_SPAWN_RADIUS.max)
     local fallbackPos = vec3(
-        playerPos.x + math.cos(angle) * dist,
-        playerPos.y + math.sin(angle) * dist,
+        playerPos.x + math.cos(baseAngle) * dist,
+        playerPos.y + math.sin(baseAngle) * dist,
         playerPos.z + 1.5
     )
-    local spawnPos = findRoadSpawnPositionNear(playerPos, POLICE_SPAWN_RADIUS.min, POLICE_SPAWN_RADIUS.max)
+    local spawnPos = findRoadSpawnPositionAhead(playerPos, playerDir, POLICE_SPAWN_RADIUS.min, POLICE_SPAWN_RADIUS.max)
         or snapToGround(fallbackPos, playerPos)
 
     -- Try random variants rather than trusting one config path.
@@ -1120,6 +1187,9 @@ function startChase(point, playerPos)
     local playerID = playerVeh:getID()
     if not playerID then return end
 
+    local playerDir = nil
+    pcall(function() playerDir = playerVeh:getDirectionVector() end)
+
     local offset   = vec3(math.random(-40, 40), CHASE_SPAWN_OFFSET, 0)
     local fallbackPos = vec3(playerPos.x + offset.x, playerPos.y + offset.y, playerPos.z)
     local spawnPos = findRoadSpawnPositionNear(playerPos, math.max(10, CHASE_SPAWN_OFFSET), math.max(60, CHASE_SPAWN_OFFSET + 70))
@@ -1144,7 +1214,7 @@ function startChase(point, playerPos)
         targetVeh:queueLuaCommand(makeDamageCheckCmd(CHASE_DAMAGE_THRESH, targetID))
         -- Chase shows wanted stars, so it should actually create wanted police too.
         for i = 1, wantedLevelForMission(CHASE) do
-            local pVeh = spawnPoliceVehicle(playerPos, playerID)
+            local pVeh = spawnPoliceVehicle(playerPos, playerID, playerDir)
             if pVeh then
                 mission.policeSpawned = (mission.policeSpawned or 0) + 1
                 addSpawnedVehicle(pVeh:getID(), "police")
@@ -1172,8 +1242,11 @@ function startEscape(point, playerPos)
     local playerID = playerVeh:getID()
     if not playerID then return end
 
+    local playerDir = nil
+    pcall(function() playerDir = playerVeh:getDirectionVector() end)
+
     for i = 1, POLICE_COUNT do
-        local pVeh = spawnPoliceVehicle(playerPos, playerID)
+        local pVeh = spawnPoliceVehicle(playerPos, playerID, playerDir)
         if pVeh then
             mission.policeSpawned = (mission.policeSpawned or 0) + 1
             addSpawnedVehicle(pVeh:getID(), "police")
@@ -1250,8 +1323,11 @@ function startEndure(point, playerPos)
     local playerID = playerVeh:getID()
     if not playerID then return end
 
+    local playerDir = nil
+    pcall(function() playerDir = playerVeh:getDirectionVector() end)
+
     for i = 1, POLICE_COUNT do
-        local pVeh = spawnPoliceVehicle(playerPos, playerID)
+        local pVeh = spawnPoliceVehicle(playerPos, playerID, playerDir)
         if pVeh then
             mission.policeSpawned = (mission.policeSpawned or 0) + 1
             addSpawnedVehicle(pVeh:getID(), "police")
@@ -1283,8 +1359,11 @@ function startReach(point, playerPos)
     local playerID = playerVeh:getID()
     if not playerID then return end
 
+    local playerDir = nil
+    pcall(function() playerDir = playerVeh:getDirectionVector() end)
+
     for i = 1, POLICE_COUNT do
-        local pVeh = spawnPoliceVehicle(playerPos, playerID)
+        local pVeh = spawnPoliceVehicle(playerPos, playerID, playerDir)
         if pVeh then
             mission.policeSpawned = (mission.policeSpawned or 0) + 1
             addSpawnedVehicle(pVeh:getID(), "police")
@@ -2500,10 +2579,11 @@ function tickFollow(playerPos, dt)
 end
 
 -- For ENDURE and REACH missions: police that drift beyond ENDURE_RECYCLE_DIST are
--- repaired and teleported far ahead of the player.  All police are spawned once at
--- mission start and recycled in-place thereafter — no new vehicles are ever created.
--- Teleport position is biased ahead of the player's facing direction so police don't
--- visibly pop in right beside the camera.
+-- repaired and teleported far ahead of the player onto a road in their forward arc.
+-- All police are spawned once at mission start and recycled in-place thereafter —
+-- no new vehicles are ever created.  With POLICE_ROADBLOCK_CHANCE probability the
+-- recycled unit is placed perpendicular to the player's heading as a stationary
+-- roadblock instead of being given chase AI.
 function tickTeleportPolice(playerPos, dt)
     if not mission or not playerPos then return end
     local playerVeh = getPlayerVehicle()
@@ -2534,16 +2614,37 @@ function tickTeleportPolice(playerPos, dt)
                     local spreadAng = (math.random() - 0.5) * math.pi * 0.55
                     local a = basePlayerAngle + spreadAng
                     local fallbackPos = vec3(playerPos.x + math.cos(a) * d, playerPos.y + math.sin(a) * d, playerPos.z + 1.5)
-                    local newPos = findRoadSpawnPositionNear(playerPos, POLICE_TELEPORT_RADIUS.min, POLICE_TELEPORT_RADIUS.max)
+                    -- Use forward-biased road search so the recycled unit lands on the road
+                    -- the player is actually driving toward.
+                    local newPos = findRoadSpawnPositionAhead(playerPos, playerDir, POLICE_TELEPORT_RADIUS.min, POLICE_TELEPORT_RADIUS.max)
                         or snapToGround(fallbackPos, playerPos)
-                    pcall(function() v:setPosition(newPos) end)
                     vd.recycleCooldown = POLICE_RECYCLE_GRACE
-                    v:queueLuaCommand(
-                        "obj:resetBrokenFlexMesh(); " ..
-                        "pcall(function() obj:setVelocity(vec3({0,0,0})) end); " ..
-                        "pcall(function() obj:setAngularVelocity(vec3({0,0,0})) end); " ..
-                        "ai.setMode('chase'); ai.setTargetObjectID(" .. tostring(playerID) .. "); ai.driveInLane('off')"
-                    )
+
+                    if math.random() < POLICE_ROADBLOCK_CHANCE then
+                        -- Place as a stationary roadblock oriented perpendicular to the
+                        -- player's direction of travel.  BeamNG vehicles face world +Y by
+                        -- default (local +Y = forward), so to make a vehicle face world
+                        -- direction (dx, dy) the Z-axis rotation is atan2(dy,dx) - π/2.
+                        -- We want the roadblock to face (basePlayerAngle + π/2), so the
+                        -- quat rotation is (basePlayerAngle + π/2) - π/2 = basePlayerAngle.
+                        local blockRot = quat(0, 0, math.sin(basePlayerAngle * 0.5), math.cos(basePlayerAngle * 0.5))
+                        pcall(function() v:setPosition(newPos) end)
+                        pcall(function() v:setRotation(blockRot) end)
+                        v:queueLuaCommand(
+                            "obj:resetBrokenFlexMesh(); " ..
+                            "pcall(function() obj:setVelocity(vec3({0,0,0})) end); " ..
+                            "pcall(function() obj:setAngularVelocity(vec3({0,0,0})) end); " ..
+                            "ai.setMode('disabled')"
+                        )
+                    else
+                        pcall(function() v:setPosition(newPos) end)
+                        v:queueLuaCommand(
+                            "obj:resetBrokenFlexMesh(); " ..
+                            "pcall(function() obj:setVelocity(vec3({0,0,0})) end); " ..
+                            "pcall(function() obj:setAngularVelocity(vec3({0,0,0})) end); " ..
+                            "ai.setMode('chase'); ai.setTargetObjectID(" .. tostring(playerID) .. "); ai.driveInLane('off')"
+                        )
+                    end
                 end
             end
         end
