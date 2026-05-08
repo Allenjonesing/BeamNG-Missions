@@ -2879,8 +2879,8 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                         local idx = state.idx or 1
                         local wp = mission.rallyWaypoints and mission.rallyWaypoints[idx]
                         if wp then
-                            state.aiRefreshTimer = math.max(0, (state.aiRefreshTimer or 0) - dt)
-                            if state.lastAiTargetIdx ~= idx or (state.aiRefreshTimer or 0) <= 0 then
+                            state.aiRefreshTimer = math.max(0, state.aiRefreshTimer - dt)
+                            if state.lastAiTargetIdx ~= idx or state.aiRefreshTimer <= 0 then
                                 moveRaceBaitToWaypoint(state.baitId, wp)
                                 queueRaceChaseBaitAI(v, state.baitId)
                                 state.lastAiTargetIdx = idx
