@@ -766,16 +766,12 @@ end
 
 -- Attempts to place missions on valid road positions.  Returns true on success.
 function tryInitMissions()
-    local needed    = countNeededPositions()
-    local positions = findRandomRoadPositions(needed, MIN_MISSION_SPACING)
-
-    if positions then
-        buildMissionPointsFromPositions(positions)
-        log("I", "jonesingMissions",
-            "Placed " .. #missionPoints .. " missions on road positions from the navigation graph.")
-        return true
-    end
-    return false
+    -- Keep mission markers fixed and stable across map loads/session reloads.
+    -- This avoids marker relocation and keeps waypoint targets consistent.
+    buildMissionPointsFallback()
+    log("I", "jonesingMissions",
+        "Placed " .. #missionPoints .. " missions using fixed fallback positions.")
+    return true
 end
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1537,10 +1533,12 @@ function startRace(point, playerPos)
                     finished = false,
                     baitId = baitId,
                     lastAiTargetIdx = 0,
+                    aiRefreshTimer = 0,
                 }
                 moveRaceBaitToWaypoint(baitId, firstWp)
                 queueRaceChaseBaitAI(veh, baitId)
                 mission.raceRacers[vid].lastAiTargetIdx = 1
+                mission.raceRacers[vid].aiRefreshTimer = 0.75
             end
         elseif veh then
             local vid = veh:getID()
@@ -2779,7 +2777,7 @@ function M._frameOps.updateActiveMission(dt, playerPos)
         return true
     end
 
-    if im and im.IsKeyPressed and im.IsKeyPressed(im.Key_Backspace) then
+    if (not isGamePaused()) and im and im.IsKeyPressed and im.IsKeyPressed(im.Key_Backspace) then
         cleanupMission(false, "Mission aborted by player.")
         return true
     end
@@ -2877,10 +2875,12 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                         local idx = state.idx or 1
                         local wp = mission.rallyWaypoints and mission.rallyWaypoints[idx]
                         if wp then
-                            if state.lastAiTargetIdx ~= idx then
+                            state.aiRefreshTimer = math.max(0, (state.aiRefreshTimer or 0) - dt)
+                            if state.lastAiTargetIdx ~= idx or (state.aiRefreshTimer or 0) <= 0 then
                                 moveRaceBaitToWaypoint(state.baitId, wp)
                                 queueRaceChaseBaitAI(v, state.baitId)
                                 state.lastAiTargetIdx = idx
+                                state.aiRefreshTimer = 0.75
                             end
                             local pos = v:getPosition()
                             local dx = pos.x - wp.x
@@ -2893,11 +2893,13 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                                 else
                                     state.idx = idx + 1
                                     state.lastAiTargetIdx = 0
+                                    state.aiRefreshTimer = 0
                                     local nextWp = mission.rallyWaypoints[state.idx]
                                     if nextWp then
                                         moveRaceBaitToWaypoint(state.baitId, nextWp)
                                         queueRaceChaseBaitAI(v, state.baitId)
                                         state.lastAiTargetIdx = state.idx
+                                        state.aiRefreshTimer = 0.75
                                     end
                                 end
                             end
@@ -2998,6 +3000,9 @@ function M.onUpdate(dt, dtSim)
 
     M._frameOps.tickMissionCooldowns(dt)
     M._frameOps.drawMissionMarkers(playerPos)
+    if isGamePaused() then
+        return
+    end
     M._frameOps.tryStartNearbyMission(playerPos)
     if M._frameOps.updateActiveMission(dt, playerPos) then
         return
