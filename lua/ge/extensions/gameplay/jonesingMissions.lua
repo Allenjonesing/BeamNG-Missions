@@ -769,9 +769,13 @@ function tryInitMissions()
     -- Keep mission markers fixed and stable across map loads/session reloads.
     -- This avoids marker relocation and keeps waypoint targets consistent.
     buildMissionPointsFallback()
-    log("I", "jonesingMissions",
-        "Placed " .. #missionPoints .. " missions using fixed fallback positions.")
-    return true
+    if #missionPoints > 0 then
+        log("I", "jonesingMissions",
+            "Placed " .. #missionPoints .. " missions using fixed fallback positions.")
+        return true
+    end
+    log("W", "jonesingMissions", "Failed to build fallback mission positions.")
+    return false
 end
 
 -- ── Helpers ────────────────────────────────────────────────────────────────────
