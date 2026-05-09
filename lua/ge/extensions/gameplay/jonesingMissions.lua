@@ -222,7 +222,7 @@ RACE_CHECKPOINT_COUNT = 5       -- total checkpoints in the street race
 RACE_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
 RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
 RACE_SPAWN_RADIUS = { min = 3, max = 10 }
-RACE_AI_REFRESH_INTERVAL = 0.75
+RACE_AI_REFRESH_INTERVAL = 10
 RACE_VARIANTS = {
     { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
     { model = "covet",    label = "Covet",            color = "0.20 0.85 0.35 1" },
@@ -245,15 +245,15 @@ PLAYER_IMMOBILE_TIME = 10.0    -- seconds immobilized near police before failing
 PLAYER_BUSTED_DISTANCE = 10     -- metres; closest police must be within this to bust immobilized player
 
 -- Beacon visual constants — dense pillar so spheres overlap and form a solid column
-BEACON_BELOW = 3      -- metres below marker Z — avoid burying pillars below road surfaces
-BEACON_ABOVE = 75    -- metres above marker Z — huge GTA-style sky pillar
+BEACON_BELOW = 50      -- metres below marker Z — avoid burying pillars below road surfaces
+BEACON_ABOVE = 250    -- metres above marker Z — huge GTA-style sky pillar
 BEACON_STEPS = 16    -- fewer slices; cheaper debugDrawer pillar
 BEACON_PILLAR_R = 4.0    -- radius of pillar spheres (m)
 BEACON_RING_SEGS = 12     -- segments in the ground-level trigger ring
 
 -- Destination beacon (REACH mission) — brighter and distinct from mission markers (larger radius)
-DEST_BEACON_BELOW = 3
-DEST_BEACON_ABOVE = 75
+DEST_BEACON_BELOW = 50
+DEST_BEACON_ABOVE = 250
 DEST_BEACON_STEPS = 16
 DEST_BEACON_R = 4.8   -- larger than BEACON_PILLAR_R so it stands out
 DEST_BEACON_RING = 12
