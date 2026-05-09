@@ -615,12 +615,39 @@ function isGamePaused()
     return false
 end
 
+function isMapOrMenuOpen()
+    local state = extensions and extensions.core_gamestate and extensions.core_gamestate.state
+    if type(state) ~= "table" then return false end
+
+    local boolKeys = {
+        "menuOpen", "isMenuOpen",
+        "bigMap", "bigMapOpen", "bigmapOpen", "bigMapActive", "isBigMapOpen",
+        "mapOpen", "isMapOpen"
+    }
+    for _, key in ipairs(boolKeys) do
+        if state[key] == true then return true end
+    end
+
+    local rawState = tostring(state.state or state.currentState or "")
+    if rawState ~= "" then
+        local s = string.lower(rawState)
+        if string.find(s, "menu", 1, true) or string.find(s, "bigmap", 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+function isMissionUpdateBlocked()
+    return isGamePaused() or isMapOrMenuOpen()
+end
+
 -- BeamNG extension callbacks usually provide both real dt and sim dt.
 -- Sim dt is the important one: it becomes 0 when paused and is scaled by slow-motion.
 -- If this build only passes one value, fall back to known sim-clock probes.
 function getSafeMissionDt(dtReal, dtSim)
     -- Hard pause guard. If the sim is paused, mission time is frozen.
-    if isGamePaused() then return 0 end
+    if isMissionUpdateBlocked() then return 0 end
 
     if type(dtSim) == "number" then
         return math.max(0, math.min(dtSim, 0.10))
@@ -1453,15 +1480,15 @@ function queueRaceChaseBaitAI(veh, baitId)
     -- This intentionally mirrors the working police logic: chase an object ID,
     -- drive out of lane, and be aggressive. The bait car is moved per-racer to
     -- that racer's next checkpoint.
-    veh:queueLuaCommand(string.format([[
-        pcall(function() ai.setMode('chase') end)
-        pcall(function() ai.setTargetObjectID(%d) end)
-        pcall(function() ai.driveInLane('off') end)
-        pcall(function() ai.setSpeedMode('set') end)
-        pcall(function() ai.setSpeed(55) end)
-        pcall(function() ai.setAggressionMode('rubberBand') end)
-        pcall(function() ai.setParameters({turnForceCoef = 5, awarenessForceCoef = 0.02}) end)
-    ]], baitId))
+    veh:queueLuaCommand(
+        "ai.setMode('chase'); " ..
+        "ai.setTargetObjectID(" .. tostring(baitId) .. "); " ..
+        "ai.driveInLane('off'); " ..
+        "pcall(function() ai.setSpeedMode('set') end); " ..
+        "pcall(function() ai.setSpeed(55) end); " ..
+        "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
+        "pcall(function() ai.setParameters({turnForceCoef = 5, awarenessForceCoef = 0.02}) end)"
+    )
 end
 
 function spawnRaceVehicle(playerVeh, racerIndex)
@@ -2781,7 +2808,7 @@ function M._frameOps.updateActiveMission(dt, playerPos)
         return true
     end
 
-    if (not isGamePaused()) and im and im.IsKeyPressed and im.IsKeyPressed(im.Key_Backspace) then
+    if (not isMissionUpdateBlocked()) and im and im.IsKeyPressed and im.IsKeyPressed(im.Key_Backspace) then
         cleanupMission(false, "Mission aborted by player.")
         return true
     end
@@ -3004,7 +3031,7 @@ function M.onUpdate(dt, dtSim)
 
     M._frameOps.tickMissionCooldowns(dt)
     M._frameOps.drawMissionMarkers(playerPos)
-    if isGamePaused() then
+    if isMissionUpdateBlocked() then
         return
     end
     M._frameOps.tryStartNearbyMission(playerPos)
