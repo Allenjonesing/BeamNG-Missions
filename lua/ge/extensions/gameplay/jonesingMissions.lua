@@ -222,6 +222,7 @@ RACE_CHECKPOINT_COUNT = 5       -- total checkpoints in the street race
 RACE_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
 RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
 RACE_SPAWN_RADIUS = { min = 3, max = 10 }
+RACE_AI_REFRESH_INTERVAL = 0.75
 RACE_VARIANTS = {
     { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
     { model = "covet",    label = "Covet",            color = "0.20 0.85 0.35 1" },
@@ -615,7 +616,7 @@ function isGamePaused()
     return false
 end
 
-function isMapOrMenuOpen()
+local function isMapOrMenuOpen()
     local state = extensions and extensions.core_gamestate and extensions.core_gamestate.state
     if type(state) ~= "table" then return false end
 
@@ -638,7 +639,7 @@ function isMapOrMenuOpen()
     return false
 end
 
-function isMissionUpdateBlocked()
+local function isMissionUpdateBlocked()
     return isGamePaused() or isMapOrMenuOpen()
 end
 
@@ -1564,12 +1565,11 @@ function startRace(point, playerPos)
                     finished = false,
                     baitId = baitId,
                     lastAiTargetIdx = 0,
-                    aiRefreshTimer = 0,
+                    aiRefreshTimer = RACE_AI_REFRESH_INTERVAL,
                 }
                 moveRaceBaitToWaypoint(baitId, firstWp)
                 queueRaceChaseBaitAI(veh, baitId)
                 mission.raceRacers[vid].lastAiTargetIdx = 1
-                mission.raceRacers[vid].aiRefreshTimer = 0.75
             end
         elseif veh then
             local vid = veh:getID()
@@ -2911,7 +2911,7 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                                 moveRaceBaitToWaypoint(state.baitId, wp)
                                 queueRaceChaseBaitAI(v, state.baitId)
                                 state.lastAiTargetIdx = idx
-                                state.aiRefreshTimer = 0.75
+                                state.aiRefreshTimer = RACE_AI_REFRESH_INTERVAL
                             end
                             local pos = v:getPosition()
                             local dx = pos.x - wp.x
@@ -2930,7 +2930,7 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                                         moveRaceBaitToWaypoint(state.baitId, nextWp)
                                         queueRaceChaseBaitAI(v, state.baitId)
                                         state.lastAiTargetIdx = state.idx
-                                        state.aiRefreshTimer = 0.75
+                                        state.aiRefreshTimer = RACE_AI_REFRESH_INTERVAL
                                     end
                                 end
                             end
