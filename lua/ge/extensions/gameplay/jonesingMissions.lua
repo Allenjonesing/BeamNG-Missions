@@ -248,7 +248,7 @@ PLAYER_BUSTED_DISTANCE = 10     -- metres; closest police must be within this to
 
 -- Beacon visual constants — dense pillar so spheres overlap and form a solid column
 BEACON_BELOW = 3      -- metres below marker Z — avoid burying pillars below road surfaces
-BEACON_ABOVE = 200    -- metres above marker Z — huge GTA-style sky pillar
+BEACON_ABOVE = 200    -- metres above marker Z — extremely tall GTA-style sky pillar
 BEACON_STEPS = 16    -- fewer slices; cheaper debugDrawer pillar
 BEACON_PILLAR_R = 4.0    -- radius of pillar spheres (m)
 BEACON_RING_SEGS = 12     -- segments in the ground-level trigger ring
