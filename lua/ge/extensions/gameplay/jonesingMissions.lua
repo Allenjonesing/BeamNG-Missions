@@ -615,6 +615,34 @@ function isGamePaused()
     return false
 end
 
+function isMenuOrMapOpen()
+    local gs = nil
+    pcall(function()
+        gs = extensions and extensions.core_gamestate and extensions.core_gamestate.state
+    end)
+    if type(gs) ~= "table" then return false end
+    if gs.paused == true then return true end
+
+    local function hasMenuLikeState(v)
+        if type(v) ~= "string" then return false end
+        local s = v:lower()
+        return s:find("menu", 1, true) ~= nil
+            or s:find("map", 1, true) ~= nil
+            or s:find("garage", 1, true) ~= nil
+            or s:find("photo", 1, true) ~= nil
+    end
+
+    local stateKeys = { "state", "appState", "currentState", "gamestate", "gameState", "uiState", "ui", "screen" }
+    for _, k in ipairs(stateKeys) do
+        if hasMenuLikeState(gs[k]) then return true end
+    end
+    return false
+end
+
+function shouldSuspendMissionUpdates()
+    return isGamePaused() or isMenuOrMapOpen()
+end
+
 -- BeamNG extension callbacks usually provide both real dt and sim dt.
 -- Sim dt is the important one: it becomes 0 when paused and is scaled by slow-motion.
 -- If this build only passes one value, fall back to known sim-clock probes.
@@ -1635,6 +1663,7 @@ end
 
 function tickPendingMissionStart(dt, playerPos)
     if not mission or not mission.starting then return false end
+    if shouldSuspendMissionUpdates() then return true end
 
     -- Do not let success/fail logic run while the target/police have not spawned yet.
     mission.startDelay = (mission.startDelay or 0) - dt
@@ -1651,9 +1680,17 @@ end
 function cleanupMission(success, failMsg)
     if not mission then return end
 
+    local silent = false
+    if type(failMsg) == "table" then
+        silent = failMsg.silent == true
+        failMsg = nil
+    end
+
     local completedType = mission.point and mission.point.type
     local completedName = mission.point and mission.point.name or "Mission"
-    missionCooldowns[completedName] = MISSION_COOLDOWN
+    if not silent then
+        missionCooldowns[completedName] = MISSION_COOLDOWN
+    end
 
     -- Despawn all mission-spawned vehicles.
     -- scenetree.findObjectById is used for deletion; be:deleteObjectByID does not exist.
@@ -1679,7 +1716,7 @@ function cleanupMission(success, failMsg)
         -- Rebuild available markers so the next harder mission of this type unlocks.
         initialized = false
         initTimer = 0
-    else
+    elseif not silent then
         notify("error", "Mission Failed!", failMsg or ("'" .. completedName .. "' failed."))
         setBigBanner("MISSION FAILED: " .. tostring(failMsg or completedName), 4.0)
     end
@@ -2333,7 +2370,7 @@ end
 
 function drawJonesingUI()
     -- Hide all custom UI while paused/menu is open. This keeps the pause/menu screen clean.
-    if isGamePaused() then return end
+    if shouldSuspendMissionUpdates() then return end
     local playerPos = getPlayerPos()
     drawHUD()
     drawRadar(playerPos)
@@ -2757,6 +2794,7 @@ end
 
 function M._frameOps.updateActiveMission(dt, playerPos)
     if not mission then return false end
+    if shouldSuspendMissionUpdates() then return true end
 
     if mission.starting or not mission.started then
         drawJonesingUI()
@@ -3021,7 +3059,7 @@ end
 
 function onExtensionUnloaded()
     saveAutosave("extension_unload")
-    cleanupMission(false)
+    cleanupMission(false, { silent = true })
     log("I", "jonesingMissions", "Jonesing Mission System unloaded.")
 end
 
