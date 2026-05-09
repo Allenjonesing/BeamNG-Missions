@@ -246,14 +246,14 @@ PLAYER_BUSTED_DISTANCE = 10     -- metres; closest police must be within this to
 
 -- Beacon visual constants — dense pillar so spheres overlap and form a solid column
 BEACON_BELOW = 3      -- metres below marker Z — avoid burying pillars below road surfaces
-BEACON_ABOVE = 75    -- metres above marker Z — huge GTA-style sky pillar
+BEACON_ABOVE = 200    -- metres above marker Z — huge GTA-style sky pillar
 BEACON_STEPS = 16    -- fewer slices; cheaper debugDrawer pillar
 BEACON_PILLAR_R = 4.0    -- radius of pillar spheres (m)
 BEACON_RING_SEGS = 12     -- segments in the ground-level trigger ring
 
 -- Destination beacon (REACH mission) — brighter and distinct from mission markers (larger radius)
 DEST_BEACON_BELOW = 3
-DEST_BEACON_ABOVE = 75
+DEST_BEACON_ABOVE = 200
 DEST_BEACON_STEPS = 16
 DEST_BEACON_R = 4.8   -- larger than BEACON_PILLAR_R so it stands out
 DEST_BEACON_RING = 12
@@ -623,7 +623,10 @@ local function isMapOrMenuOpen()
     local boolKeys = {
         "menuOpen", "isMenuOpen",
         "bigMap", "bigMapOpen", "bigmapOpen", "bigMapActive", "isBigMapOpen",
-        "mapOpen", "isMapOpen"
+        "mapOpen", "isMapOpen",
+        "mapVisible", "isMapVisible", "bigMapVisible", "isBigMapVisible",
+        "menuVisible", "isMenuVisible",
+        "uiMenuOpen", "uiMapOpen"
     }
     for _, key in ipairs(boolKeys) do
         if state[key] == true then return true end
@@ -632,7 +635,9 @@ local function isMapOrMenuOpen()
     local rawState = tostring(state.state or state.currentState or "")
     if rawState ~= "" then
         local s = string.lower(rawState)
-        if string.find(s, "menu", 1, true) or string.find(s, "bigmap", 1, true) then
+        if string.find(s, "menu", 1, true)
+            or string.find(s, "bigmap", 1, true)
+            or string.find(s, "map", 1, true) then
             return true
         end
     end
@@ -1345,30 +1350,22 @@ function generateRallyWaypoints(startPos, count)
     local waypoints = {}
     local prevPos   = startPos
 
-    -- Try to pull positions from the road graph for realistic placement
-    local roadPositions = findRandomRoadPositions(count + 5, 100)
+    -- Build a sequential route from one nearby road point to the next so checkpoints
+    -- progress along roads instead of jumping to unrelated random graph nodes.
+    for _ = 1, count do
+        local wp = findRoadSpawnPositionNear(prevPos, 140, RALLY_WAYPOINT_SPREAD)
 
-    if roadPositions and #roadPositions >= count then
-        -- Sort by distance from startPos and pick the first `count`
-        local sorted = {}
-        for _, rp in ipairs(roadPositions) do
-            table.insert(sorted, { pos = rp, dist = startPos:distance(rp) })
+        -- Fallback: random offset if no road point can be found for this segment.
+        if not wp then
+            local angle  = math.random() * 2 * math.pi
+            local dist   = math.random(150, RALLY_WAYPOINT_SPREAD)
+            wp = vec3(
+                prevPos.x + math.cos(angle) * dist,
+                prevPos.y + math.sin(angle) * dist,
+                prevPos.z
+            )
         end
-        table.sort(sorted, function(a, b) return a.dist < b.dist end)
-        for i = 1, math.min(count, #sorted) do
-            table.insert(waypoints, sorted[i].pos)
-        end
-    end
 
-    -- Fallback: generate random offsets if we couldn't get enough road positions
-    while #waypoints < count do
-        local angle  = math.random() * 2 * math.pi
-        local dist   = math.random(150, RALLY_WAYPOINT_SPREAD)
-        local wp = vec3(
-            prevPos.x + math.cos(angle) * dist,
-            prevPos.y + math.sin(angle) * dist,
-            prevPos.z
-        )
         table.insert(waypoints, wp)
         prevPos = wp
     end
@@ -1484,11 +1481,11 @@ function queueRaceChaseBaitAI(veh, baitId)
     veh:queueLuaCommand(
         "pcall(function() ai.setMode('chase') end); " ..
         "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
-        "pcall(function() ai.driveInLane('off') end); " ..
+        "pcall(function() ai.driveInLane('on') end); " ..
         "pcall(function() ai.setSpeedMode('set') end); " ..
-        "pcall(function() ai.setSpeed(55) end); " ..
-        "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
-        "pcall(function() ai.setParameters({turnForceCoef = 5, awarenessForceCoef = 0.02}) end)"
+        "pcall(function() ai.setSpeed(22) end); " ..
+        "pcall(function() ai.setAggressionMode('off') end); " ..
+        "pcall(function() ai.setParameters({turnForceCoef = 1.6, awarenessForceCoef = 1.0}) end)"
     )
 end
 
@@ -1664,6 +1661,7 @@ end
 
 function tickPendingMissionStart(dt, playerPos)
     if not mission or not mission.starting then return false end
+    if isMissionUpdateBlocked() then return true end
 
     -- Do not let success/fail logic run while the target/police have not spawned yet.
     mission.startDelay = (mission.startDelay or 0) - dt
