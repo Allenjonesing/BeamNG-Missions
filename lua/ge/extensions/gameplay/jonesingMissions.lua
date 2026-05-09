@@ -269,6 +269,8 @@ RADAR_RANGE_METERS = 250
 RADAR_ROAD_DRAW_LIMIT = 120
 DIST_KM_THRESHOLD = 1000   -- metres; above this shown in km
 AUTOSAVE_PATH = "/settings/jonesingMissions.autosave.json"
+MENU_STATE_KEYWORDS = { "menu", "map", "garage", "photo" }
+GAMESTATE_STATE_KEYS = { "state", "appState", "currentState", "gamestate", "gameState", "uiState", "ui", "screen" }
 
 -- ── State ──────────────────────────────────────────────────────────────────────
 pulseTime = 0
@@ -626,14 +628,15 @@ function isMenuOrMapOpen()
     local function hasMenuLikeState(v)
         if type(v) ~= "string" then return false end
         local s = v:lower()
-        return s:find("menu", 1, true) ~= nil
-            or s:find("map", 1, true) ~= nil
-            or s:find("garage", 1, true) ~= nil
-            or s:find("photo", 1, true) ~= nil
+        for _, keyword in ipairs(MENU_STATE_KEYWORDS) do
+            if s:find(keyword, 1, true) ~= nil then
+                return true
+            end
+        end
+        return false
     end
 
-    local stateKeys = { "state", "appState", "currentState", "gamestate", "gameState", "uiState", "ui", "screen" }
-    for _, k in ipairs(stateKeys) do
+    for _, k in ipairs(GAMESTATE_STATE_KEYS) do
         if hasMenuLikeState(gs[k]) then return true end
     end
     return false
@@ -1677,14 +1680,10 @@ function tickPendingMissionStart(dt, playerPos)
     return true
 end
 
-function cleanupMission(success, failMsg)
+function cleanupMission(success, failMsg, options)
     if not mission then return end
 
-    local silent = false
-    if type(failMsg) == "table" then
-        silent = failMsg.silent == true
-        failMsg = nil
-    end
+    local silent = type(options) == "table" and options.silent == true
 
     local completedType = mission.point and mission.point.type
     local completedName = mission.point and mission.point.name or "Mission"
@@ -3059,7 +3058,7 @@ end
 
 function onExtensionUnloaded()
     saveAutosave("extension_unload")
-    cleanupMission(false, { silent = true })
+    cleanupMission(false, nil, { silent = true })
     log("I", "jonesingMissions", "Jonesing Mission System unloaded.")
 end
 
