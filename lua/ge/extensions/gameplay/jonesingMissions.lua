@@ -270,7 +270,7 @@ RADAR_ROAD_DRAW_LIMIT = 120
 DIST_KM_THRESHOLD = 1000   -- metres; above this shown in km
 AUTOSAVE_PATH = "/settings/jonesingMissions.autosave.json"
 MENU_STATE_KEYWORDS = { "menu", "map", "garage", "photo" }
-GAMESTATE_STATE_KEYS = { "state", "appState", "currentState", "gamestate", "gameState", "uiState", "ui", "screen" }
+GAMESTATE_KEYS = { "state", "appState", "currentState", "gamestate", "gameState", "uiState", "ui", "screen" }
 
 -- ── State ──────────────────────────────────────────────────────────────────────
 pulseTime = 0
@@ -619,6 +619,8 @@ end
 
 function isMenuOrMapOpen()
     local gs = nil
+    -- core_gamestate may be unavailable during map/load transitions on some BeamNG builds.
+    -- Probe defensively and treat failures as "not menu/map" to avoid hard errors in onUpdate.
     pcall(function()
         gs = extensions and extensions.core_gamestate and extensions.core_gamestate.state
     end)
@@ -636,7 +638,7 @@ function isMenuOrMapOpen()
         return false
     end
 
-    for _, k in ipairs(GAMESTATE_STATE_KEYS) do
+    for _, k in ipairs(GAMESTATE_KEYS) do
         if hasMenuLikeState(gs[k]) then return true end
     end
     return false
