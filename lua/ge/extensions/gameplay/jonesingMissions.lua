@@ -22,6 +22,7 @@
 
 local M = {}
 local SESSION_STATE_KEY = "__jonesingMissionSessionState"
+local ACTIVE_RESTORE_ARMED_KEY = "__jonesingMissionActiveRestoreArmed"
 
 -- BeamNG ImGui is usually exposed as ui_imgui in extensions.
 -- Keep the old global fallback so the file remains version-tolerant.
@@ -216,14 +217,15 @@ RALLY_CHECKPOINT_COUNT = 5       -- total waypoints to reach
 RALLY_BASE_TIME = 60      -- seconds for the first checkpoint
 RALLY_BONUS_TIME = 30      -- seconds added per checkpoint reached
 RALLY_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
-RALLY_WAYPOINT_SPREAD = 400     -- metres: max distance between successive waypoints
+RALLY_WAYPOINT_SPREAD = { min = 150, max = 400 }     -- metres: min and max distance between successive waypoints
 
 -- RACE mission tuning (AI racers + ordered checkpoints, no timer)
 RACE_CHECKPOINT_COUNT = 5       -- total checkpoints in the street race
 RACE_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
+RACE_WAYPOINT_SPREAD = { min = 50, max = 100 }     -- metres: min and max distance between successive waypoints
 RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
 RACE_SPAWN_RADIUS = { min = 3, max = 10 }
-RACE_AI_SPEED = 75
+RACE_AI_SPEED = 100
 RACE_AI_AGGRESSION = 0.85
 RACE_VARIANTS = {
     { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
@@ -381,7 +383,7 @@ local function saveMissionSessionState()
     rawset(_G, SESSION_STATE_KEY, session)
 end
 
-local function restoreMissionSessionState()
+local function restoreMissionSessionState(allowActiveMission)
     local session = rawget(_G, SESSION_STATE_KEY)
     if type(session) ~= "table" or type(session.missionPoints) ~= "table" then return false end
 
@@ -408,7 +410,7 @@ local function restoreMissionSessionState()
         end
     end
 
-    if type(session.activeState) == "table" and type(session.activeState.mission) == "table" then
+    if allowActiveMission and type(session.activeState) == "table" and type(session.activeState.mission) == "table" then
         mission = session.activeState.mission
         spawnedVehicles = type(session.activeState.spawnedVehicles) == "table" and session.activeState.spawnedVehicles or {}
         destroyedTargets = type(session.activeState.destroyedTargets) == "table" and session.activeState.destroyedTargets or {}
@@ -422,6 +424,17 @@ local function restoreMissionSessionState()
         missionCooldowns = type(session.activeState.missionCooldowns) == "table"
             and session.activeState.missionCooldowns
             or missionCooldowns
+    else
+        mission = nil
+        spawnedVehicles = {}
+        destroyedTargets = {}
+        playerWrecked = false
+        targetLastPos = nil
+        targetStoppedSecs = 0
+        targetSpeedTimer = 0
+        loaderHideTimer = 0
+        focusReturnTimer = 0
+        loaderActive = false
     end
 
     return #missionPoints > 0
@@ -678,10 +691,11 @@ function snapToGround(pos, refPos)
     return vec3(x, y, best + 0.75)
 end
 
-function findRoadSpawnPositionNear(origin, minDist, maxDist)
+function findRoadSpawnPositionNear(origin, minDist, maxDist, preferredDir, minForwardDot)
     if not origin then return nil end
 
     local candidates = {}
+    local preferredCandidates = {}
     local pool = radarRoadPositions
 
     if not pool or #pool == 0 then
@@ -698,14 +712,40 @@ function findRoadSpawnPositionNear(origin, minDist, maxDist)
 
     if not pool or #pool == 0 then return nil end
 
+    local dirX = nil
+    local dirY = nil
+    local dirLen = nil
+    if preferredDir and type(preferredDir.x) == "number" and type(preferredDir.y) == "number" then
+        dirLen = math.sqrt(preferredDir.x * preferredDir.x + preferredDir.y * preferredDir.y)
+        if dirLen and dirLen > 0.001 then
+            dirX = preferredDir.x / dirLen
+            dirY = preferredDir.y / dirLen
+        end
+    end
+
     for _, pos in ipairs(pool) do
         local dist = origin:distance(pos)
         if dist >= minDist and dist <= maxDist then
             table.insert(candidates, pos)
+
+            if dirX and dirY then
+                local offsetX = pos.x - origin.x
+                local offsetY = pos.y - origin.y
+                local offsetLen = math.sqrt(offsetX * offsetX + offsetY * offsetY)
+                if offsetLen > 0.001 then
+                    local forwardDot = ((offsetX / offsetLen) * dirX) + ((offsetY / offsetLen) * dirY)
+                    if forwardDot >= (minForwardDot or 0) then
+                        table.insert(preferredCandidates, pos)
+                    end
+                end
+            end
         end
     end
 
     if #candidates == 0 then return nil end
+    if #preferredCandidates > 0 then
+        candidates = preferredCandidates
+    end
     return snapToGround(candidates[math.random(1, #candidates)], origin)
 end
 
@@ -998,6 +1038,14 @@ end
 
 function hideLoaderSoon(seconds)
     loaderHideTimer = math.max(loaderHideTimer or 0, seconds or 0.75)
+end
+
+function dismissLoader()
+    loaderHideTimer = 0
+    loaderActive = false
+    if guihooks then
+        guihooks.trigger('setLoading', { loading = false })
+    end
 end
 
 function getPlayerPos()
@@ -1499,7 +1547,7 @@ end
 -- Generates `count` random waypoints around a starting position, each within
 -- RALLY_WAYPOINT_SPREAD of the previous.  Uses the road graph if available,
 -- otherwise falls back to purely random offsets.
-function generateRallyWaypoints(startPos, count)
+function generateRallyWaypoints(startPos, count, min, max)
     local waypoints = {}
     local prevPos   = startPos
 
@@ -1521,7 +1569,7 @@ function generateRallyWaypoints(startPos, count)
     -- Fallback: generate random offsets if we couldn't get enough road positions
     while #waypoints < count do
         local angle  = math.random() * 2 * math.pi
-        local dist   = math.random(150, RALLY_WAYPOINT_SPREAD)
+        local dist   = math.random(min, max)
         local wp = vec3(
             prevPos.x + math.cos(angle) * dist,
             prevPos.y + math.sin(angle) * dist,
@@ -1539,7 +1587,7 @@ function startRally(point, playerPos)
     if not playerVeh then return end
 
     local waypointCount = point.waypointCount or RALLY_CHECKPOINT_COUNT
-    mission.rallyWaypoints   = generateRallyWaypoints(playerPos, waypointCount)
+    mission.rallyWaypoints   = generateRallyWaypoints(playerPos, waypointCount, RALLY_WAYPOINT_SPREAD.min, RALLY_WAYPOINT_SPREAD.max)
     mission.rallyCurrentIdx  = 1
     mission.rallyTimeLeft    = RALLY_BASE_TIME
     forcePlayerFocus()
@@ -1738,7 +1786,7 @@ function startRace(point, playerPos)
 
     local waypointCount = point.waypointCount or RACE_CHECKPOINT_COUNT
 
-    mission.rallyWaypoints = generateRallyWaypoints(playerPos, waypointCount)
+    mission.rallyWaypoints = generateRallyWaypoints(playerPos, waypointCount, RACE_WAYPOINT_SPREAD.min, RACE_WAYPOINT_SPREAD.max)
     mission.rallyCurrentIdx = 1
     mission.raceRacers = {}
     mission.raceFinishCount = 0
@@ -1814,9 +1862,10 @@ function runMissionStart(point, playerPos)
         mission.timer = 0
     end
 
+    dismissLoader()
     forcePlayerFocus()
     armFocusReturn(2.0)
-    hideLoaderSoon(0.85)
+    saveMissionSessionState()
 end
 
 -- ── Mission lifecycle ──────────────────────────────────────────────────────────
@@ -1858,6 +1907,17 @@ end
 
 function tickPendingMissionStart(dt, playerPos)
     if not mission or not mission.starting then return false end
+
+    if spawnedVehicles and #spawnedVehicles > 0 then
+        mission.starting = false
+        mission.started = true
+        mission.timer = mission.timer or 0
+        dismissLoader()
+        forcePlayerFocus()
+        armFocusReturn(2.0)
+        saveMissionSessionState()
+        return true
+    end
 
     -- Do not let success/fail logic run while the target/police have not spawned yet.
     mission.startDelay = (mission.startDelay or 0) - dt
@@ -2747,6 +2807,11 @@ function tickTeleportPolice(playerPos, dt)
     local playerDir = nil
     pcall(function() playerDir = playerVeh:getDirectionVector() end)
     if not playerDir then playerDir = vec3(0, 1, 0) end
+    local playerSpeed = math.max(0, tonumber(getVehicleSpeed(playerVeh)) or 0)
+    local speedFactor = math.min(1, playerSpeed / 45)
+    local recycleMinDist = math.floor(POLICE_TELEPORT_RADIUS.min + ((POLICE_TELEPORT_RADIUS.max - POLICE_TELEPORT_RADIUS.min) * 0.35) + (90 * speedFactor))
+    local recycleMaxDist = math.floor(POLICE_TELEPORT_RADIUS.max + (140 * speedFactor))
+    local forwardDot = 0.2 + (0.55 * speedFactor)
     local basePlayerAngle = math.atan2(playerDir.y, playerDir.x)
 
     for _, vd in ipairs(spawnedVehicles) do
@@ -2759,11 +2824,11 @@ function tickTeleportPolice(playerPos, dt)
                 -- Without this grace, they immediately qualify for recycling again and can get
                 -- stuck in a teleport/despawn-looking loop before their AI can settle.
                 if dist > ENDURE_RECYCLE_DIST and (vd.recycleCooldown or 0) <= 0 then
-                    local d = math.random(POLICE_TELEPORT_RADIUS.min, POLICE_TELEPORT_RADIUS.max)
-                    local spreadAng = (math.random() - 0.5) * math.pi * 0.55
+                    local d = math.random(recycleMinDist, recycleMaxDist)
+                    local spreadAng = (math.random() - 0.5) * math.pi * (0.55 - (0.30 * speedFactor))
                     local a = basePlayerAngle + spreadAng
                     local fallbackPos = vec3(playerPos.x + math.cos(a) * d, playerPos.y + math.sin(a) * d, playerPos.z + 1.5)
-                    local newPos = findRoadSpawnPositionNear(playerPos, POLICE_TELEPORT_RADIUS.min, POLICE_TELEPORT_RADIUS.max)
+                    local newPos = findRoadSpawnPositionNear(playerPos, recycleMinDist, recycleMaxDist, playerDir, forwardDot)
                         or snapToGround(fallbackPos, playerPos)
                     pcall(function() v:setPosition(newPos) end)
                     vd.recycleCooldown = POLICE_RECYCLE_GRACE
@@ -3243,7 +3308,9 @@ end
 -- ── Extension hooks ────────────────────────────────────────────────────────────
 function onExtensionLoaded()
     loadAutosave()
-    if restoreMissionSessionState() then
+    local allowActiveMission = rawget(_G, ACTIVE_RESTORE_ARMED_KEY) == true
+    rawset(_G, ACTIVE_RESTORE_ARMED_KEY, false)
+    if restoreMissionSessionState(allowActiveMission) then
         initialized = true
         initTimer = 0
         log("I", "jonesingMissions", "Restored mission placements for the current play session.")
@@ -3257,6 +3324,7 @@ function onExtensionLoaded()
 end
 
 function onExtensionUnloaded()
+    rawset(_G, ACTIVE_RESTORE_ARMED_KEY, mission ~= nil)
     saveMissionSessionState()
     saveAutosave("extension_unload")
     log("I", "jonesingMissions", "Jonesing Mission System unloaded.")
