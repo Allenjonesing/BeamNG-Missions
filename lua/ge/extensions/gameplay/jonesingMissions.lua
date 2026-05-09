@@ -21,6 +21,7 @@
 -- pause-safe mission timers, and one-unlocked-mission-per-type tier progression.
 
 local M = {}
+local SESSION_STATE_KEY = "__jonesingMissionSessionState"
 
 -- BeamNG ImGui is usually exposed as ui_imgui in extensions.
 -- Keep the old global fallback so the file remains version-tolerant.
@@ -222,7 +223,8 @@ RACE_CHECKPOINT_COUNT = 5       -- total checkpoints in the street race
 RACE_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
 RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
 RACE_SPAWN_RADIUS = { min = 3, max = 10 }
-RACE_AI_REFRESH_INTERVAL = 10
+RACE_AI_SPEED = 75
+RACE_AI_AGGRESSION = 0.85
 RACE_VARIANTS = {
     { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
     { model = "covet",    label = "Covet",            color = "0.20 0.85 0.35 1" },
@@ -298,6 +300,132 @@ missionStartHome = nil
 radarRoadPositions = {}
 radarRoadSegments = {}
 getPlayerVehicle = nil -- forward declaration used by helpers above the concrete function
+
+local function serializeVec3(pos)
+    if not pos then return nil end
+    return { x = pos.x, y = pos.y, z = pos.z }
+end
+
+local function serializeLuaValue(value)
+    local valueType = type(value)
+    if valueType == "number" or valueType == "boolean" then return tostring(value) end
+    if valueType == "string" then return string.format("%q", value) end
+    if valueType ~= "table" then return "nil" end
+
+    local isArray = true
+    local maxIndex = 0
+    for key in pairs(value) do
+        if type(key) ~= "number" then
+            isArray = false
+            break
+        end
+        if key > maxIndex then maxIndex = key end
+    end
+
+    local parts = {}
+    if isArray then
+        for index = 1, maxIndex do
+            table.insert(parts, serializeLuaValue(value[index]))
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+
+    for key, item in pairs(value) do
+        table.insert(parts, tostring(key) .. "=" .. serializeLuaValue(item))
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function deserializeVec3(pos)
+    if not pos or type(pos.x) ~= "number" or type(pos.y) ~= "number" or type(pos.z) ~= "number" then
+        return nil
+    end
+    return vec3(pos.x, pos.y, pos.z)
+end
+
+local function saveMissionSessionState()
+    local session = {
+        missionPoints = {},
+        missionCompletedByType = sanitizeMissionProgress(missionCompletedByType),
+    }
+
+    if mission then
+        session.activeState = {
+            mission = mission,
+            spawnedVehicles = spawnedVehicles,
+            destroyedTargets = destroyedTargets,
+            playerWrecked = playerWrecked,
+            targetLastPos = targetLastPos,
+            targetStoppedSecs = targetStoppedSecs,
+            targetSpeedTimer = targetSpeedTimer,
+            loaderHideTimer = loaderHideTimer,
+            focusReturnTimer = focusReturnTimer,
+            loaderActive = loaderActive,
+            missionCooldowns = missionCooldowns,
+        }
+    end
+
+    for _, mp in ipairs(missionPoints or {}) do
+        table.insert(session.missionPoints, {
+            name = mp.name,
+            type = mp.type,
+            triggerRadius = mp.triggerRadius,
+            color = mp.color and { r = mp.color.r, g = mp.color.g, b = mp.color.b, a = mp.color.a } or nil,
+            tier = mp.tier,
+            difficulty = mp.difficulty,
+            pos = serializeVec3(mp.pos),
+            destPos = serializeVec3(mp.destPos),
+        })
+    end
+
+    rawset(_G, SESSION_STATE_KEY, session)
+end
+
+local function restoreMissionSessionState()
+    local session = rawget(_G, SESSION_STATE_KEY)
+    if type(session) ~= "table" or type(session.missionPoints) ~= "table" then return false end
+
+    missionCompletedByType = sanitizeMissionProgress(session.missionCompletedByType)
+    missionPoints = {}
+    missionCooldowns = {}
+
+    for _, saved in ipairs(session.missionPoints) do
+        local pos = deserializeVec3(saved.pos)
+        if pos then
+            local mp = {
+                name = saved.name,
+                type = saved.type,
+                triggerRadius = saved.triggerRadius,
+                color = saved.color,
+                tier = saved.tier,
+                difficulty = saved.difficulty,
+                pos = pos,
+                destPos = deserializeVec3(saved.destPos),
+            }
+            mp.triggerRadiusSq = (mp.triggerRadius or 0) * (mp.triggerRadius or 0)
+            missionCooldowns[mp.name] = 0
+            table.insert(missionPoints, mp)
+        end
+    end
+
+    if type(session.activeState) == "table" and type(session.activeState.mission) == "table" then
+        mission = session.activeState.mission
+        spawnedVehicles = type(session.activeState.spawnedVehicles) == "table" and session.activeState.spawnedVehicles or {}
+        destroyedTargets = type(session.activeState.destroyedTargets) == "table" and session.activeState.destroyedTargets or {}
+        playerWrecked = session.activeState.playerWrecked == true
+        targetLastPos = session.activeState.targetLastPos
+        targetStoppedSecs = tonumber(session.activeState.targetStoppedSecs) or 0
+        targetSpeedTimer = tonumber(session.activeState.targetSpeedTimer) or 0
+        loaderHideTimer = tonumber(session.activeState.loaderHideTimer) or 0
+        focusReturnTimer = tonumber(session.activeState.focusReturnTimer) or 0
+        loaderActive = session.activeState.loaderActive == true
+        missionCooldowns = type(session.activeState.missionCooldowns) == "table"
+            and session.activeState.missionCooldowns
+            or missionCooldowns
+    end
+
+    return #missionPoints > 0
+end
 
 function sanitizeMissionProgress(data)
     local out = {}
@@ -443,6 +571,20 @@ function findRandomRoadPositions(count, minSpacing)
                     end
                 end
             end
+        end
+    end
+
+    if radarRoadSegments and #radarRoadSegments > 0 then
+        local segmentPositions = {}
+        for _, seg in ipairs(radarRoadSegments) do
+            table.insert(segmentPositions, vec3(
+                (seg.a.x + seg.b.x) * 0.5,
+                (seg.a.y + seg.b.y) * 0.5,
+                (seg.a.z + seg.b.z) * 0.5
+            ))
+        end
+        if #segmentPositions >= count then
+            allPositions = segmentPositions
         end
     end
 
@@ -794,15 +936,31 @@ end
 
 -- Attempts to place missions on valid road positions.  Returns true on success.
 function tryInitMissions()
-    -- Keep mission markers fixed and stable across map loads/session reloads.
-    -- This avoids marker relocation and keeps waypoint targets consistent.
-    buildMissionPointsFallback()
-    if #missionPoints > 0 then
-        log("I", "jonesingMissions",
-            "Placed " .. #missionPoints .. " missions using fixed fallback positions.")
+    local needed = countNeededPositions()
+    if needed <= 0 then
+        missionPoints = {}
+        saveMissionSessionState()
         return true
     end
-    log("W", "jonesingMissions", "Failed to build fallback mission positions.")
+
+    local positions = findRandomRoadPositions(needed, MIN_MISSION_SPACING)
+    if positions and #positions >= needed then
+        buildMissionPointsFromPositions(positions)
+        saveMissionSessionState()
+        log("I", "jonesingMissions",
+            "Placed " .. #missionPoints .. " missions using randomized road positions.")
+        return true
+    end
+
+    buildMissionPointsFallback()
+    if #missionPoints > 0 then
+        saveMissionSessionState()
+        log("W", "jonesingMissions",
+            "Map graph placement unavailable; using fallback mission positions for this load.")
+        return true
+    end
+
+    log("W", "jonesingMissions", "Failed to build mission positions.")
     return false
 end
 
@@ -1475,20 +1633,56 @@ function moveRaceBaitToWaypoint(baitId, waypoint)
     freezeRaceBaitVehicle(bait)
 end
 
-function queueRaceChaseBaitAI(veh, baitId)
+function getRaceRoadTargets(targetPos)
+    if not targetPos or not map or not map.findClosestRoad then return nil end
+
+    local ok, nodeA, nodeB = pcall(map.findClosestRoad, targetPos)
+    if not ok or not nodeA then return nil end
+
+    local targets = { nodeA }
+    if nodeB and nodeB ~= nodeA then
+        table.insert(targets, nodeB)
+    end
+    return targets
+end
+
+function buildRaceAiRoute(targetPos)
+    local wpTargets = getRaceRoadTargets(targetPos)
+    if not wpTargets or #wpTargets == 0 then return nil end
+
+    return "{wpTargetList = " .. serializeLuaValue(wpTargets)
+    .. ", noOfLaps = 1, aggression = " .. tostring(RACE_AI_AGGRESSION)
+    .. ", avoidCars = \"off\", driveInLane = \"on\", speedMode = \"set\"}"
+end
+
+function queueRaceChaseBaitAI(veh, baitId, targetPos)
     if not veh or not baitId then return end
 
-    -- This intentionally mirrors the working police logic: chase an object ID,
-    -- drive out of lane, and be aggressive. The bait car is moved per-racer to
-    -- that racer's next checkpoint.
+    local route = buildRaceAiRoute(targetPos)
+    if route then
+        veh:queueLuaCommand(
+            "pcall(function() ai.setMode('disabled') end); " ..
+            "pcall(function() ai.driveInLane('on') end); " ..
+            "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
+            "pcall(function() ai.setSpeedMode('set') end); " ..
+            "pcall(function() ai.setSpeed(" .. tostring(RACE_AI_SPEED) .. ") end); " ..
+            "pcall(function() ai.setParameters({turnForceCoef = 3.2, awarenessForceCoef = 0.45}) end); " ..
+            "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
+            "pcall(function() ai.driveUsingPath(" .. route .. ") end)"
+        )
+        return
+    end
+
+    -- Fallback when no usable road target can be derived.
     veh:queueLuaCommand(
+        "pcall(function() ai.setMode('disabled') end); " ..
         "pcall(function() ai.setMode('chase') end); " ..
         "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
-        "pcall(function() ai.driveInLane('off') end); " ..
-        "pcall(function() ai.setSpeedMode('set') end); " ..
-        "pcall(function() ai.setSpeed(55) end); " ..
+        "pcall(function() ai.driveInLane('on') end); " ..
         "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
-        "pcall(function() ai.setParameters({turnForceCoef = 5, awarenessForceCoef = 0.02}) end)"
+        "pcall(function() ai.setSpeedMode('set') end); " ..
+        "pcall(function() ai.setSpeed(" .. tostring(RACE_AI_SPEED) .. ") end); " ..
+        "pcall(function() ai.setParameters({turnForceCoef = 3.2, awarenessForceCoef = 0.45}) end)"
     )
 end
 
@@ -1564,12 +1758,11 @@ function startRace(point, playerPos)
                     idx = 1,
                     finished = false,
                     baitId = baitId,
-                    lastAiTargetIdx = 0,
-                    aiRefreshTimer = RACE_AI_REFRESH_INTERVAL,
+                    aiInitialized = false,
                 }
                 moveRaceBaitToWaypoint(baitId, firstWp)
-                queueRaceChaseBaitAI(veh, baitId)
-                mission.raceRacers[vid].lastAiTargetIdx = 1
+                queueRaceChaseBaitAI(veh, baitId, firstWp)
+                mission.raceRacers[vid].aiInitialized = true
             end
         elseif veh then
             local vid = veh:getID()
@@ -1660,6 +1853,7 @@ function startMission(point)
     showLoader("Starting " .. missionDisplayName(point) .. "...")
     setBigBanner("MISSION STARTING: " .. missionDisplayName(point), 2.0)
     forcePlayerFocus()
+    saveMissionSessionState()
 end
 
 function tickPendingMissionStart(dt, playerPos)
@@ -1705,15 +1899,21 @@ function cleanupMission(success, failMsg)
         saveAutosave("mission_complete")
         notify("success", "Mission Complete!", "Well done!  '" .. completedName .. "' completed!")
         setBigBanner("MISSION COMPLETE", 3.0)
-        -- Rebuild available markers so the next harder mission of this type unlocks.
-        initialized = false
-        initTimer = 0
     else
         notify("error", "Mission Failed!", failMsg or ("'" .. completedName .. "' failed."))
         setBigBanner("MISSION FAILED: " .. tostring(failMsg or completedName), 4.0)
     end
 
     mission = nil
+    saveMissionSessionState()
+
+    if success then
+        -- Rebuild markers only after the active mission state has been cleared so
+        -- session restore cannot resurrect the finished mission on map reload.
+        if tryInitMissions() then
+            initialized = true
+        end
+    end
 end
 
 -- ── Shared HUD helpers ─────────────────────────────────────────────────────────
@@ -2906,12 +3106,10 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                         local idx = state.idx or 1
                         local wp = mission.rallyWaypoints and mission.rallyWaypoints[idx]
                         if wp then
-                            state.aiRefreshTimer = math.max(0, state.aiRefreshTimer - dt)
-                            if state.lastAiTargetIdx ~= idx or state.aiRefreshTimer <= 0 then
+                            if not state.aiInitialized then
                                 moveRaceBaitToWaypoint(state.baitId, wp)
-                                queueRaceChaseBaitAI(v, state.baitId)
-                                state.lastAiTargetIdx = idx
-                                state.aiRefreshTimer = RACE_AI_REFRESH_INTERVAL
+                                queueRaceChaseBaitAI(v, state.baitId, wp)
+                                state.aiInitialized = true
                             end
                             local pos = v:getPosition()
                             local dx = pos.x - wp.x
@@ -2923,14 +3121,10 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                                     return true
                                 else
                                     state.idx = idx + 1
-                                    state.lastAiTargetIdx = 0
-                                    state.aiRefreshTimer = 0
                                     local nextWp = mission.rallyWaypoints[state.idx]
                                     if nextWp then
                                         moveRaceBaitToWaypoint(state.baitId, nextWp)
-                                        queueRaceChaseBaitAI(v, state.baitId)
-                                        state.lastAiTargetIdx = state.idx
-                                        state.aiRefreshTimer = RACE_AI_REFRESH_INTERVAL
+                                        queueRaceChaseBaitAI(v, state.baitId, nextWp)
                                     end
                                 end
                             end
@@ -3049,6 +3243,13 @@ end
 -- ── Extension hooks ────────────────────────────────────────────────────────────
 function onExtensionLoaded()
     loadAutosave()
+    if restoreMissionSessionState() then
+        initialized = true
+        initTimer = 0
+        log("I", "jonesingMissions", "Restored mission placements for the current play session.")
+        return
+    end
+
     initialized = false
     initTimer = 0
     log("I", "jonesingMissions",
@@ -3056,8 +3257,8 @@ function onExtensionLoaded()
 end
 
 function onExtensionUnloaded()
+    saveMissionSessionState()
     saveAutosave("extension_unload")
-    cleanupMission(false)
     log("I", "jonesingMissions", "Jonesing Mission System unloaded.")
 end
 
@@ -3099,8 +3300,6 @@ end
 
 function M.loadAutosave()
     local loaded = loadAutosave()
-    initialized = false
-    initTimer = 0
     return loaded
 end
 
