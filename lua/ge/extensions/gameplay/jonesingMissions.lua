@@ -1363,11 +1363,13 @@ function generateRallyWaypoints(startPos, count)
 
     -- Build a sequential route from one nearby road point to the next so checkpoints
     -- progress along roads instead of jumping to unrelated random graph nodes.
-    for _ = 1, count do
+    for i = 1, count do
         local wp = findRoadSpawnPositionNear(prevPos, RALLY_MIN_CHECKPOINT_DISTANCE, RALLY_WAYPOINT_SPREAD)
 
         -- Fallback: random offset if no road point can be found for this segment.
         if not wp then
+            log("W", "jonesingMissions",
+                "Checkpoint " .. tostring(i) .. " could not find nearby road position; using random fallback.")
             local angle  = math.random() * 2 * math.pi
             local dist   = math.random(150, RALLY_WAYPOINT_SPREAD)
             wp = vec3(
