@@ -222,7 +222,9 @@ RACE_CHECKPOINT_COUNT = 5       -- total checkpoints in the street race
 RACE_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
 RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
 RACE_SPAWN_RADIUS = { min = 3, max = 10 }
+RACE_AI_SPEED = 22      -- m/s (~79 km/h): keeps racers competitive while still road-following reliably
 RACE_AI_REFRESH_INTERVAL = 0.75
+RALLY_MIN_CHECKPOINT_DISTANCE = 140 -- metres between sequential rally/race checkpoints
 RACE_VARIANTS = {
     { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
     { model = "covet",    label = "Covet",            color = "0.20 0.85 0.35 1" },
@@ -1353,7 +1355,7 @@ function generateRallyWaypoints(startPos, count)
     -- Build a sequential route from one nearby road point to the next so checkpoints
     -- progress along roads instead of jumping to unrelated random graph nodes.
     for _ = 1, count do
-        local wp = findRoadSpawnPositionNear(prevPos, 140, RALLY_WAYPOINT_SPREAD)
+        local wp = findRoadSpawnPositionNear(prevPos, RALLY_MIN_CHECKPOINT_DISTANCE, RALLY_WAYPOINT_SPREAD)
 
         -- Fallback: random offset if no road point can be found for this segment.
         if not wp then
@@ -1483,7 +1485,7 @@ function queueRaceChaseBaitAI(veh, baitId)
         "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
         "pcall(function() ai.driveInLane('on') end); " ..
         "pcall(function() ai.setSpeedMode('set') end); " ..
-        "pcall(function() ai.setSpeed(22) end); " ..
+        "pcall(function() ai.setSpeed(" .. tostring(RACE_AI_SPEED) .. ") end); " ..
         "pcall(function() ai.setAggressionMode('off') end); " ..
         "pcall(function() ai.setParameters({turnForceCoef = 1.6, awarenessForceCoef = 1.0}) end)"
     )
