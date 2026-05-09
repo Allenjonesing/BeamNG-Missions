@@ -637,10 +637,16 @@ local function isMapOrMenuOpen()
     local rawState = tostring(state.state or state.currentState or "")
     if rawState ~= "" then
         local s = string.lower(rawState)
-        if string.find(s, "menu", 1, true)
-            or string.find(s, "bigmap", 1, true)
-            or string.find(s, "map", 1, true) then
-            return true
+        local stateTokens = {
+            "menu", "mainmenu", "pausemenu",
+            "bigmap", "big_map",
+            "mapview", "map_view", "worldmap", "world_map",
+        }
+        if s == "map" then return true end
+        for _, token in ipairs(stateTokens) do
+            if string.find(s, token, 1, true) then
+                return true
+            end
         end
     end
     return false
