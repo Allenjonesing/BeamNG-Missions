@@ -1481,9 +1481,9 @@ function queueRaceChaseBaitAI(veh, baitId)
     -- drive out of lane, and be aggressive. The bait car is moved per-racer to
     -- that racer's next checkpoint.
     veh:queueLuaCommand(
-        "ai.setMode('chase'); " ..
-        "ai.setTargetObjectID(" .. tostring(baitId) .. "); " ..
-        "ai.driveInLane('off'); " ..
+        "pcall(function() ai.setMode('chase') end); " ..
+        "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
+        "pcall(function() ai.driveInLane('off') end); " ..
         "pcall(function() ai.setSpeedMode('set') end); " ..
         "pcall(function() ai.setSpeed(55) end); " ..
         "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
