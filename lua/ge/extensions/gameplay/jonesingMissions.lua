@@ -622,6 +622,8 @@ local function isMapOrMenuOpen()
     local state = extensions and extensions.core_gamestate and extensions.core_gamestate.state
     if type(state) ~= "table" then return false end
 
+    -- BeamNG exposes menu/map state with different keys across versions/builds.
+    -- Probe a compatibility list so missions reliably freeze while map/menu UI is open.
     local boolKeys = {
         "menuOpen", "isMenuOpen",
         "bigMap", "bigMapOpen", "bigmapOpen", "bigMapActive", "isBigMapOpen",
@@ -808,7 +810,8 @@ end
 -- Attempts to place missions on valid road positions.  Returns true on success.
 function tryInitMissions()
     -- Keep mission markers fixed and stable across map loads/session reloads.
-    -- This avoids marker relocation and keeps waypoint targets consistent.
+    -- Dynamic graph placement was intentionally disabled because it relocated marker
+    -- coordinates between loads, which broke player waypoint consistency.
     buildMissionPointsFallback()
     if #missionPoints > 0 then
         log("I", "jonesingMissions",
