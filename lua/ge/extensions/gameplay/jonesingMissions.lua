@@ -16,8 +16,10 @@
 -- Mission markers are placed on valid roadways using the map navigation graph so
 -- they are always accessible by vehicle.  Positions are randomised each session.
 --
--- A larger ImGui HUD panel now sits left-middle, with a right-middle radar,
--- bottom-center objective banner, custom loader overlay, target arrows, pause-hidden UI, camera-relative radar, roads overlay,
+-- A polished ImGui HUD panel now sits left-middle (rounded corners, gold border, larger font),
+-- with a right-middle radar (rounded corners, blue border, arrow-only player marker, no "YOU" label),
+-- bottom-center objective banner (rounded corners, gold border), custom loader overlay,
+-- target arrows, pause-hidden UI, camera-relative radar, roads overlay,
 -- pause-safe mission timers, and one-unlocked-mission-per-type tier progression.
 
 local M = {}
@@ -268,7 +270,7 @@ INIT_TIMEOUT = 5.0    -- seconds to wait for map data before using fallback posi
 
 -- HUD constants
 HUD_WINDOW_WIDTH = 540
-HUD_SCALE = 1.50
+HUD_SCALE = 1.70
 RADAR_WINDOW_SIZE = 320
 RADAR_RANGE_METERS = 250
 RADAR_ROAD_DRAW_LIMIT = 120
@@ -2124,7 +2126,8 @@ function drawHUD()
     local width = mission and HUD_WINDOW_WIDTH or HUD_WINDOW_WIDTH
     im.SetNextWindowSize(im.ImVec2(width, 0), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("leftMiddle", width, 520, 24, 24), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.86)
+    im.SetNextWindowBgAlpha(0.84)
+    pushWindowStyle({ 1.0, 0.82, 0.20, 0.80 })
 
     local winFlags = bit.bor(
         im.WindowFlags_NoTitleBar,
@@ -2280,16 +2283,40 @@ function drawHUD()
         end
     end
     im.End()
+    popWindowStyle()
 end
 
 
 imguiColor = nil
 
+-- Push rounded corners and a coloured border onto the ImGui style stack.
+-- borderColor: { r, g, b, a }  (defaults to soft gold if omitted)
+function pushWindowStyle(borderColor)
+    if im.PushStyleVar then
+        im.PushStyleVar(im.StyleVar_WindowRounding,    12.0)
+        im.PushStyleVar(im.StyleVar_WindowBorderSize,  1.5)
+    end
+    if im.PushStyleColor then
+        local r = borderColor and borderColor[1] or 1.0
+        local g = borderColor and borderColor[2] or 0.82
+        local b = borderColor and borderColor[3] or 0.20
+        local a = borderColor and borderColor[4] or 0.72
+        im.PushStyleColor(im.Col_Border, im.ImVec4(r, g, b, a))
+    end
+end
+
+-- Matching pop for pushWindowStyle (2 style vars + 1 colour).
+function popWindowStyle()
+    if im.PopStyleVar   then im.PopStyleVar(2)   end
+    if im.PopStyleColor then im.PopStyleColor(1) end
+end
+
 function drawLoaderOverlay()
     if not im or not loaderActive then return end
     im.SetNextWindowSize(im.ImVec2(520, 120), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("center", 520, 120, 24, 24), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.92)
+    im.SetNextWindowBgAlpha(0.88)
+    pushWindowStyle({ 1.0, 0.82, 0.10, 0.85 })
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings)
     if im.Begin("##jonesingLoaderOverlay", nil, flags) then
         if im.SetWindowFontScale then im.SetWindowFontScale(1.65) end
@@ -2298,6 +2325,7 @@ function drawLoaderOverlay()
         im.TextColored(im.ImVec4(0.9, 0.9, 0.9, 1.0), "  " .. tostring(loaderLabel or "Please wait..."))
     end
     im.End()
+    popWindowStyle()
 end
 
 function drawBottomBanner(playerPos)
@@ -2309,13 +2337,15 @@ function drawBottomBanner(playerPos)
     if not text or text == "" then return end
     im.SetNextWindowSize(im.ImVec2(900, 100), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("bottomCenter", 900, 100, 24, 42), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.78)
+    im.SetNextWindowBgAlpha(0.80)
+    pushWindowStyle({ 1.0, 0.85, 0.0, 0.80 })
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings)
     if im.Begin("##jonesingBottomBanner", nil, flags) then
         if im.SetWindowFontScale then im.SetWindowFontScale(1.85) end
         im.TextColored(im.ImVec4(1.0, 0.85, 0.0, 1.0), "  " .. text)
     end
     im.End()
+    popWindowStyle()
 end
 
 function imguiColor(r, g, b, a)
@@ -2373,8 +2403,6 @@ function drawRadarPlayerGlyph(cx, cy)
         im.TextColored(im.ImVec4(0.05, 0.05, 0.05, 1.0), "^")
         im.SetCursorScreenPos(im.ImVec2(cx - 9, cy - 12))
         im.TextColored(im.ImVec4(0.20, 1.0, 0.30, 1.0), "^")
-        im.SetCursorScreenPos(im.ImVec2(cx - 11, cy + 10))
-        im.TextColored(im.ImVec4(0.20, 1.0, 0.30, 1.0), "YOU")
     end)
 end
 
@@ -2465,7 +2493,6 @@ function drawPlayerRadarArrow(drawList, cx, cy, radarHeading)
     pcall(function() drawList:AddTriangleFilled(rotPoint(0, -15), rotPoint(-9, 10), rotPoint(9, 10), pcol) end)
     pcall(function() drawList:AddCircleFilled(im.ImVec2(cx, cy), 5.5, imguiColor(0.05, 0.10, 0.05, 0.95), 18) end)
     pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), 14, imguiColor(1,1,1,0.95), 20, 2.0) end)
-    pcall(function() drawList:AddText(im.ImVec2(cx - 24, cy + 18), imguiColor(0.70,1.0,0.70,1.0), 'YOU') end)
 end
 
 function compassFromAngle(angle)
@@ -2477,7 +2504,8 @@ function drawRadar(playerPos)
     local w, h = RADAR_WINDOW_SIZE, RADAR_WINDOW_SIZE
     im.SetNextWindowSize(im.ImVec2(w, h), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("rightMiddle", w, h, 28, 24), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.90)
+    im.SetNextWindowBgAlpha(0.86)
+    pushWindowStyle({ 0.55, 0.80, 1.0, 0.80 })
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings, im.WindowFlags_NoScrollbar)
     if im.Begin("##jonesingRadar", nil, flags) then
         local drawList = im.GetWindowDrawList and im.GetWindowDrawList()
@@ -2580,6 +2608,7 @@ function drawRadar(playerPos)
         im.TextColored(im.ImVec4(0.78, 0.78, 0.78, 1.0), string.format("Range %dm  Blips:%d", RADAR_RANGE_METERS, #items))
     end
     im.End()
+    popWindowStyle()
 end
 
 function drawTargetArrows(playerPos)
