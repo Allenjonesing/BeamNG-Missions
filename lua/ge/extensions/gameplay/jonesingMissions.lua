@@ -2300,7 +2300,7 @@ function pushWindowStyle(borderColor)
         local r = borderColor and borderColor[1] or 1.0
         local g = borderColor and borderColor[2] or 0.82
         local b = borderColor and borderColor[3] or 0.20
-        local a = borderColor and borderColor[4] or 0.72
+        local a = borderColor and borderColor[4] or 0.80
         im.PushStyleColor(im.Col_Border, im.ImVec4(r, g, b, a))
     end
 end
