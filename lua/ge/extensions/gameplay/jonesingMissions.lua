@@ -302,6 +302,10 @@ missionStartHome = nil
 radarRoadPositions = {}
 radarRoadSegments = {}
 getPlayerVehicle = nil -- forward declaration used by helpers above the concrete function
+GAME_MODE_MENU = "menu"
+GAME_MODE_STARTING = "mission_starting"
+GAME_MODE_ACTIVE = "mission_active"
+GAME_MODE_IDLE = "idle"
 
 local function serializeVec3(pos)
     if not pos then return nil end
@@ -805,7 +809,10 @@ local function isMapOrMenuOpen()
     local boolKeys = {
         "menuOpen", "isMenuOpen",
         "bigMap", "bigMapOpen", "bigmapOpen", "bigMapActive", "isBigMapOpen",
-        "mapOpen", "isMapOpen"
+        "mapOpen", "isMapOpen",
+        "paused", "isPaused",
+        "menuActive", "inMenu", "isInMenu",
+        "bigMapVisible", "isBigMapVisible"
     }
     for _, key in ipairs(boolKeys) do
         if state[key] == true then return true end
@@ -814,7 +821,9 @@ local function isMapOrMenuOpen()
     local rawState = tostring(state.state or state.currentState or "")
     if rawState ~= "" then
         local s = string.lower(rawState)
-        if string.find(s, "menu", 1, true) or string.find(s, "bigmap", 1, true) then
+        if string.find(s, "menu", 1, true)
+            or string.find(s, "bigmap", 1, true)
+            or string.find(s, "pause", 1, true) then
             return true
         end
     end
@@ -823,6 +832,51 @@ end
 
 local function isMissionUpdateBlocked()
     return isGamePaused() or isMapOrMenuOpen()
+end
+
+local function gameModeState()
+    if isMissionUpdateBlocked() then return GAME_MODE_MENU end
+    if mission and mission.starting then return GAME_MODE_STARTING end
+    if mission and mission.started then return GAME_MODE_ACTIVE end
+    return GAME_MODE_IDLE
+end
+
+local function clearSpawnedMissionVehicles()
+    for _, vd in ipairs(spawnedVehicles or {}) do
+        local vehObj = scenetree.findObjectById(vd.id)
+        if not vehObj and be and be.getObjectByID then
+            vehObj = be:getObjectByID(vd.id)
+        end
+        if vehObj and vehObj.delete then
+            pcall(function() vehObj:delete() end)
+        end
+    end
+    spawnedVehicles = {}
+end
+
+local function closeMapDuringMissionStart()
+    if not mission or not mission.starting then return end
+    if not isMapOrMenuOpen() then return end
+
+    local gm = extensions and extensions.core_gamestate
+    if gm then
+        pcall(function() if gm.requestGameState then gm.requestGameState("play") end end)
+        pcall(function() if gm.setGameState then gm.setGameState("play") end end)
+    end
+
+    local bm = extensions and (extensions.core_bigMap or extensions.core_bigmap)
+    if bm then
+        pcall(function() if bm.close then bm.close() end end)
+        pcall(function() if bm.setVisible then bm.setVisible(false) end end)
+        pcall(function() if bm.setActive then bm.setActive(false) end end)
+    end
+
+    if guihooks then
+        pcall(function() guihooks.trigger("MenuHide", {}) end)
+        pcall(function() guihooks.trigger("ChangeState", { state = "play" }) end)
+    end
+    forcePlayerFocus()
+    armFocusReturn(1.0)
 end
 
 -- BeamNG extension callbacks usually provide both real dt and sim dt.
@@ -1876,6 +1930,8 @@ function startMission(point)
     local playerPos = getPlayerPos()
     if not playerPos then return end
 
+    -- Fail-safe: remove any stale spawned mission vehicles before a new mission starts.
+    clearSpawnedMissionVehicles()
     spawnedVehicles   = {}
     destroyedTargets  = {}
     playerWrecked     = false
@@ -1941,11 +1997,7 @@ function cleanupMission(success, failMsg)
 
     -- Despawn all mission-spawned vehicles.
     -- scenetree.findObjectById is used for deletion; be:deleteObjectByID does not exist.
-    for _, vd in ipairs(spawnedVehicles) do
-        local vehObj = scenetree.findObjectById(vd.id)
-        if vehObj then vehObj:delete() end
-    end
-    spawnedVehicles  = {}
+    clearSpawnedMissionVehicles()
     destroyedTargets = {}
     playerWrecked    = false
     targetLastPos    = nil
@@ -3392,6 +3444,12 @@ function M.onUpdate(dt, dtSim)
         if bigBannerTimer <= 0 then bigBannerText = "" end
     end
 
+    local mode = gameModeState()
+    if mode == GAME_MODE_MENU then
+        closeMapDuringMissionStart()
+        return
+    end
+
     if tickPendingMissionStart(dt, playerPos) then
         drawJonesingUI()
         return
@@ -3399,9 +3457,6 @@ function M.onUpdate(dt, dtSim)
 
     M._frameOps.tickMissionCooldowns(dt)
     M._frameOps.drawMissionMarkers(playerPos)
-    if isMissionUpdateBlocked() then
-        return
-    end
     M._frameOps.tryStartNearbyMission(playerPos)
     if M._frameOps.updateActiveMission(dt, playerPos) then
         return
