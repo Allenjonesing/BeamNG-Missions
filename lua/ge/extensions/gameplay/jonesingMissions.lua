@@ -1807,6 +1807,7 @@ function startRace(point, playerPos)
                     finished = false,
                     baitId = baitId,
                     aiInitialized = false,
+                    racerIndex = i,
                 }
                 moveRaceBaitToWaypoint(baitId, firstWp)
                 queueRaceChaseBaitAI(veh, baitId, firstWp)
@@ -2022,6 +2023,96 @@ function formatMeters(dist)
     return string.format("%.1f km", dist / DIST_KM_THRESHOLD)
 end
 
+local function safeRaceCheckpointIndex(idx, total)
+    if not total or total <= 0 then return 0 end
+    idx = tonumber(idx) or 1
+    if idx < 1 then return 1 end
+    if idx > total then return total end
+    return idx
+end
+
+local function ordinalPlace(n)
+    if not n then return "?" end
+    local mod100 = n % 100
+    if mod100 >= 11 and mod100 <= 13 then return tostring(n) .. "th" end
+    local mod10 = n % 10
+    if mod10 == 1 then return tostring(n) .. "st" end
+    if mod10 == 2 then return tostring(n) .. "nd" end
+    if mod10 == 3 then return tostring(n) .. "rd" end
+    return tostring(n) .. "th"
+end
+
+local function raceDistanceText(dist)
+    if not dist or dist == math.huge then return "??" end
+    return formatMeters(dist)
+end
+
+local function buildRaceStandings(playerPos)
+    if not mission or not playerPos or not mission.rallyWaypoints then return nil end
+
+    local totalCheckpoints = #mission.rallyWaypoints
+    if totalCheckpoints <= 0 then
+        return { entries = {}, player = nil, total = 0 }
+    end
+
+    local function makeEntry(name, idx, pos, finished, sortKey, isPlayer)
+        local cpIdx = safeRaceCheckpointIndex(idx, totalCheckpoints)
+        local wp = mission.rallyWaypoints[cpIdx]
+        local distToNext = (pos and wp) and pos:distance(wp) or math.huge
+        return {
+            name = name,
+            idx = cpIdx,
+            finished = finished or false,
+            distToNext = distToNext,
+            sortKey = sortKey or 0,
+            isPlayer = isPlayer or false,
+        }
+    end
+
+    local entries = {
+        makeEntry("You", mission.rallyCurrentIdx or 1, playerPos, false, 0, true)
+    }
+
+    for vid, state in pairs(mission.raceRacers or {}) do
+        local racer = be:getObjectByID(vid)
+        if racer then
+            table.insert(entries, makeEntry(
+                string.format("Rival %d", state.racerIndex or (#entries)),
+                state.idx or 1,
+                racer:getPosition(),
+                state.finished,
+                state.racerIndex or vid,
+                false
+            ))
+        end
+    end
+
+    table.sort(entries, function(a, b)
+        if a.finished ~= b.finished then
+            return a.finished and not b.finished
+        end
+        if a.idx ~= b.idx then
+            return a.idx > b.idx
+        end
+        if a.distToNext ~= b.distToNext then
+            return a.distToNext < b.distToNext
+        end
+        return a.sortKey < b.sortKey
+    end)
+
+    local player = nil
+    for place, entry in ipairs(entries) do
+        entry.place = place
+        if entry.isPlayer then player = entry end
+    end
+
+    return {
+        entries = entries,
+        player = player,
+        total = #entries,
+    }
+end
+
 function getRoleVehicleInfo(playerPos, role)
     if not playerPos then return nil end
     for _, vd in ipairs(spawnedVehicles) do
@@ -2232,6 +2323,7 @@ function drawHUD()
                 local idx   = mission.rallyCurrentIdx or 1
                 local total = mission.rallyWaypoints and #mission.rallyWaypoints or 0
                 local closest = getClosestRacerInfo(playerPos)
+                local standings = buildRaceStandings(playerPos)
                 im.TextColored(im.ImVec4(1.0, 0.45, 0.20, 1.0), string.format("  Checkpoint: %d / %d", idx, total))
                 if mission.rallyWaypoints and idx <= total then
                     local wp = mission.rallyWaypoints[idx]
@@ -2239,8 +2331,25 @@ function drawHUD()
                     local wDir = compassDir(wp.x - playerPos.x, wp.y - playerPos.y)
                     im.TextColored(im.ImVec4(1.0, 0.45, 0.20, 1.0), string.format("  Next CP: %s %s", wDir, formatMeters(wDist)))
                 end
+                if standings and standings.player then
+                    im.TextColored(im.ImVec4(1.0, 0.78, 0.45, 1.0),
+                        string.format("  Place: %s / %d", ordinalPlace(standings.player.place), standings.total))
+                end
                 im.TextColored(im.ImVec4(0.95, 0.85, 0.85, 1.0), string.format("  Rivals: %d", tableSize(mission.raceRacers or {})))
                 im.TextColored(im.ImVec4(0.95, 0.85, 0.85, 1.0), string.format("  Closest rival: %s %s", closest and closest.dir or "??", closest and formatMeters(closest.dist) or "none"))
+                if standings and #standings.entries > 1 then
+                    for _, entry in ipairs(standings.entries) do
+                        if not entry.isPlayer then
+                            im.TextColored(im.ImVec4(0.95, 0.72, 0.72, 1.0),
+                                string.format("  %s: %s | CP %d/%d | %s",
+                                    entry.name,
+                                    ordinalPlace(entry.place),
+                                    entry.idx,
+                                    total,
+                                    raceDistanceText(entry.distToNext)))
+                        end
+                    end
+                end
 
             elseif mtype == CRUISE then
                 local rem = math.max(0, math.ceil(CRUISE_TIME_LIMIT - mission.timer))
