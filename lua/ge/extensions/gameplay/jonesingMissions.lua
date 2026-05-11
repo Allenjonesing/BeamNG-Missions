@@ -306,7 +306,7 @@ local GAME_MODE_MENU = "menu"
 local GAME_MODE_STARTING = "mission_starting"
 local GAME_MODE_ACTIVE = "mission_active"
 local GAME_MODE_IDLE = "idle"
-local MAP_CLOSE_FOCUS_RETURN = 1.0
+local MAP_CLOSE_FOCUS_DELAY_SECONDS = 1.0
 
 local function serializeVec3(pos)
     if not pos then return nil end
@@ -846,6 +846,7 @@ local function clearSpawnedMissionVehicles()
     for _, vd in ipairs(spawnedVehicles or {}) do
         local vehObj = scenetree.findObjectById(vd.id)
         if not vehObj and be and be.getObjectByID then
+            -- BeamNG object accessors are typically called as methods on `be`.
             vehObj = be:getObjectByID(vd.id)
         end
         if vehObj and vehObj.delete then
@@ -877,7 +878,7 @@ local function closeMapDuringMissionStart()
         pcall(function() guihooks.trigger("ChangeState", { state = "play" }) end)
     end
     forcePlayerFocus()
-    armFocusReturn(MAP_CLOSE_FOCUS_RETURN)
+    armFocusReturn(MAP_CLOSE_FOCUS_DELAY_SECONDS)
 end
 
 -- BeamNG extension callbacks usually provide both real dt and sim dt.
@@ -1933,7 +1934,6 @@ function startMission(point)
 
     -- Fail-safe: remove any stale spawned mission vehicles before a new mission starts.
     clearSpawnedMissionVehicles()
-    spawnedVehicles   = {}
     destroyedTargets  = {}
     playerWrecked     = false
     targetLastPos     = nil
