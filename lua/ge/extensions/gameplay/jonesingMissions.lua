@@ -845,10 +845,6 @@ end
 local function clearSpawnedMissionVehicles()
     for _, vd in ipairs(spawnedVehicles or {}) do
         local vehObj = scenetree.findObjectById(vd.id)
-        if not vehObj and be and be.getObjectByID then
-            -- BeamNG object accessors are typically called as methods on `be`.
-            vehObj = be:getObjectByID(vd.id)
-        end
         if vehObj and vehObj.delete then
             pcall(function() vehObj:delete() end)
         end
@@ -877,6 +873,7 @@ local function closeMapDuringMissionStart()
         pcall(function() guihooks.trigger("MenuHide", {}) end)
         pcall(function() guihooks.trigger("ChangeState", { state = "play" }) end)
     end
+    -- Keep camera/vehicle focus on the player after forcing the UI back to play mode.
     forcePlayerFocus()
     armFocusReturn(MAP_CLOSE_FOCUS_DELAY_SECONDS)
 end
