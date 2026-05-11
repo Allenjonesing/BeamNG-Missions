@@ -302,10 +302,11 @@ missionStartHome = nil
 radarRoadPositions = {}
 radarRoadSegments = {}
 getPlayerVehicle = nil -- forward declaration used by helpers above the concrete function
-GAME_MODE_MENU = "menu"
-GAME_MODE_STARTING = "mission_starting"
-GAME_MODE_ACTIVE = "mission_active"
-GAME_MODE_IDLE = "idle"
+local GAME_MODE_MENU = "menu"
+local GAME_MODE_STARTING = "mission_starting"
+local GAME_MODE_ACTIVE = "mission_active"
+local GAME_MODE_IDLE = "idle"
+local MAP_CLOSE_FOCUS_RETURN = 1.0
 
 local function serializeVec3(pos)
     if not pos then return nil end
@@ -876,7 +877,7 @@ local function closeMapDuringMissionStart()
         pcall(function() guihooks.trigger("ChangeState", { state = "play" }) end)
     end
     forcePlayerFocus()
-    armFocusReturn(1.0)
+    armFocusReturn(MAP_CLOSE_FOCUS_RETURN)
 end
 
 -- BeamNG extension callbacks usually provide both real dt and sim dt.
