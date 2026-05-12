@@ -807,34 +807,63 @@ function isGamePaused()
         local ok, paused = pcall(fn)
         if ok and paused == true then return true end
     end
+
+    local stateSources = {
+        extensions and extensions.core_gamestate and extensions.core_gamestate.state,
+        extensions and extensions.core_gamestate and extensions.core_gamestate.gameState,
+        core_gamestate and core_gamestate.state,
+        core_gamestate and core_gamestate.gameState,
+    }
+    for _, state in ipairs(stateSources) do
+        if type(state) == "table" and (state.paused == true or state.isPaused == true) then
+            return true
+        end
+    end
+
     return false
 end
 
 local function isMapOrMenuOpen()
-    local state = extensions and extensions.core_gamestate and extensions.core_gamestate.state
-    if type(state) ~= "table" then return false end
-
     local boolKeys = {
         "menuOpen", "isMenuOpen",
         "bigMap", "bigMapOpen", "bigmapOpen", "bigMapActive", "isBigMapOpen",
         "mapOpen", "isMapOpen",
         "paused", "isPaused",
         "menuActive", "inMenu", "isInMenu",
-        "bigMapVisible", "isBigMapVisible"
+        "bigMapVisible", "isBigMapVisible",
+        "overlayMapOpen", "isOverlayMapOpen"
     }
-    for _, key in ipairs(boolKeys) do
-        if state[key] == true then return true end
-    end
+    local modeKeys = {
+        "state", "currentState", "mode", "uiState", "gameState"
+    }
+    local stateSources = {
+        extensions and extensions.core_gamestate and extensions.core_gamestate.state,
+        extensions and extensions.core_gamestate and extensions.core_gamestate.gameState,
+        core_gamestate and core_gamestate.state,
+        core_gamestate and core_gamestate.gameState,
+        gameplay and gameplay.state
+    }
 
-    local rawState = tostring(state.state or state.currentState or "")
-    if rawState ~= "" then
-        local s = string.lower(rawState)
-        if string.find(s, "menu", 1, true)
-            or string.find(s, "bigmap", 1, true)
-            or string.find(s, "pause", 1, true) then
-            return true
+    for _, state in ipairs(stateSources) do
+        if type(state) == "table" then
+            for _, key in ipairs(boolKeys) do
+                if state[key] == true then return true end
+            end
+            for _, key in ipairs(modeKeys) do
+                local rawState = tostring(state[key] or "")
+                if rawState ~= "" then
+                    local s = string.lower(rawState)
+                    if string.find(s, "menu", 1, true)
+                        or string.find(s, "bigmap", 1, true)
+                        or string.find(s, "map", 1, true)
+                        or string.find(s, "pause", 1, true) then
+                        return true
+                    end
+                end
+            end
         end
     end
+
     return false
 end
 
@@ -1099,16 +1128,13 @@ getPlayerVehicle = function()
 end
 
 function forcePlayerFocus()
+    if isMissionUpdateBlocked() then return end
     local pv = getPlayerVehicle()
     if not pv then return end
 
-    -- Spawning vehicles can steal focus in BeamNG.  Re-enter the original player
-    -- vehicle for several frames after spawning so the camera/focus snaps back.
+    -- Spawning vehicles can steal focus in BeamNG. Re-enter the original player
+    -- vehicle, but never force a specific camera mode.
     pcall(function() be:enterVehicle(0, pv) end)
-
-    if core_camera and core_camera.setByName then
-        pcall(function() core_camera.setByName(0, "orbit") end)
-    end
 end
 
 function armFocusReturn(seconds)
@@ -1948,6 +1974,7 @@ end
 -- ── Mission lifecycle ──────────────────────────────────────────────────────────
 function startMission(point)
     if mission then return end
+    if isMissionUpdateBlocked() then return end
 
     local playerPos = getPlayerPos()
     if not playerPos then return end
@@ -2000,7 +2027,6 @@ function tickPendingMissionStart(dt, playerPos)
     -- Do not let success/fail logic run while the target/police have not spawned yet.
     mission.startDelay = (mission.startDelay or 0) - dt
     showLoader("Starting " .. tostring(mission.point.name) .. "...")
-    forcePlayerFocus()
 
     if mission.startDelay <= 0 then
         runMissionStart(mission.point, playerPos or getPlayerPos())
@@ -3344,7 +3370,7 @@ function M._frameOps.drawMissionMarkers(playerPos)
 end
 
 function M._frameOps.tryStartNearbyMission(playerPos)
-    if mission or not playerPos then return end
+    if mission or not playerPos or isMissionUpdateBlocked() then return end
 
     for _, mp in ipairs(missionPoints) do
         if (missionCooldowns[mp.name] or 0) <= 0 then
@@ -3573,10 +3599,13 @@ function M.onUpdate(dt, dtSim)
 
     -- Resolve player position once per frame.  May be nil (spectator mode, etc.).
     local playerPos = getPlayerPos()
+    local missionBlocked = isMissionUpdateBlocked()
 
     if focusReturnTimer and focusReturnTimer > 0 then
-        focusReturnTimer = math.max(0, focusReturnTimer - dt)
-        forcePlayerFocus()
+        focusReturnTimer = math.max(0, focusReturnTimer - rawDt)
+        if not missionBlocked then
+            forcePlayerFocus()
+        end
     end
 
     if loaderHideTimer and loaderHideTimer > 0 then
@@ -3591,7 +3620,7 @@ function M.onUpdate(dt, dtSim)
         if bigBannerTimer <= 0 then bigBannerText = "" end
     end
 
-    if gameModeState() == GAME_MODE_MENU then return end
+    if missionBlocked then return end
 
     if tickPendingMissionStart(dt, playerPos) then
         drawJonesingUI()
