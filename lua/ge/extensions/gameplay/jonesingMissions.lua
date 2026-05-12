@@ -229,6 +229,10 @@ RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
 RACE_SPAWN_RADIUS = { min = 3, max = 10 }
 RACE_AI_SPEED = 100
 RACE_AI_AGGRESSION = 0.85
+RACE_RECOVERY_DISTANCE = 180
+RACE_RECOVERY_STOPPED_SPEED = 3.0
+RACE_RECOVERY_STOPPED_TIME = 4.0
+RACE_RECOVERY_COOLDOWN = 8.0
 RACE_VARIANTS = {
     { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
     { model = "covet",    label = "Covet",            color = "0.20 0.85 0.35 1" },
@@ -238,6 +242,8 @@ RACE_VARIANTS = {
 -- CRUISE mission tuning (single far destination, no police, player chooses route)
 CRUISE_TIME_LIMIT = 300     -- seconds to reach the destination
 CRUISE_RADIUS = 25      -- metres: arriving within this of destPos = success
+
+MISSION_QUICK_TRAVEL_OFFSET = 20
 
 -- Player damage tracking (ESCAPE / ENDURE / REACH fail condition)
 PLAYER_DAMAGE_THRESH = 0.70   -- player vehicle wrecked at this damage level
@@ -865,23 +871,27 @@ function setBigBanner(text, seconds)
     bigBannerTimer = math.max(bigBannerTimer or 0, seconds or 3.0)
 end
 
-function saveMissionStartHome()
+local function setPlayerRecoveryHome(pos, rot)
     local pv = getPlayerVehicle and getPlayerVehicle()
-    if not pv then return end
-    local pos = pv:getPosition()
-    local rot = nil
-    pcall(function() rot = pv:getRotation() end)
-    missionStartHome = { id = pv:getID(), pos = vec3(pos.x, pos.y, pos.z + 0.35), rot = rot }
+    if not pv or not pos then return end
 
-    -- Best-effort hooks for BeamNG's recovery/home system.  BeamNG exposes these
-    -- differently across versions, so we try the common names but keep our own
-    -- missionStartHome copy as a fallback/reference.
+    missionStartHome = { id = pv:getID(), pos = vec3(pos.x, pos.y, pos.z), rot = rot }
+
     pcall(function() if core_recovery and core_recovery.setHome then core_recovery.setHome(pv:getID()) end end)
     pcall(function() if core_recovery and core_recovery.saveHome then core_recovery.saveHome(pv:getID()) end end)
     pcall(function() if core_recovery and core_recovery.setSpawnPoint then core_recovery.setSpawnPoint(pv:getID(), missionStartHome.pos, missionStartHome.rot) end end)
     pcall(function() if core_recovery and core_recovery.setVehicleHome then core_recovery.setVehicleHome(pv:getID(), missionStartHome.pos, missionStartHome.rot) end end)
     pcall(function() if gameplay_recovery and gameplay_recovery.setHome then gameplay_recovery.setHome(pv:getID()) end end)
     pcall(function() if gameplay_recovery and gameplay_recovery.saveHome then gameplay_recovery.saveHome(pv:getID()) end end)
+end
+
+function saveMissionStartHome()
+    local pv = getPlayerVehicle and getPlayerVehicle()
+    if not pv then return end
+    local pos = pv:getPosition()
+    local rot = nil
+    pcall(function() rot = pv:getRotation() end)
+    setPlayerRecoveryHome(vec3(pos.x, pos.y, pos.z + 0.35), rot)
 end
 
 function recoverPlayerToMissionStart()
@@ -917,6 +927,57 @@ function stopPlayerVehicle()
         pcall(function() obj:resetBrokenFlexMesh() end)
         pcall(function() obj:resetPhysics() end)
     ]])
+end
+
+local function quickTravelToMissionPoint(point)
+    if mission or not point or not point.pos then return false end
+
+    local pv = getPlayerVehicle and getPlayerVehicle()
+    local playerPos = getPlayerPos()
+    if not pv or not playerPos then return false end
+
+    local dirX = point.pos.x - playerPos.x
+    local dirY = point.pos.y - playerPos.y
+    local len = math.sqrt(dirX * dirX + dirY * dirY)
+    if len < 0.001 then
+        local forward = nil
+        pcall(function() forward = pv:getDirectionVector() end)
+        if forward then
+            dirX = forward.x
+            dirY = forward.y
+            len = math.sqrt(dirX * dirX + dirY * dirY)
+        end
+    end
+    if len < 0.001 then
+        dirX, dirY, len = 0, 1, 1
+    end
+
+    local offset = (point.triggerRadius or 12) + MISSION_QUICK_TRAVEL_OFFSET
+    local travelPos = vec3({
+        point.pos.x - (dirX / len) * offset,
+        point.pos.y - (dirY / len) * offset,
+        point.pos.z + 0.35
+    })
+    travelPos = snapToGround(travelPos, point.pos) or travelPos
+
+    local rot = nil
+    pcall(function() rot = pv:getRotation() end)
+    setPlayerRecoveryHome(travelPos, rot)
+    pcall(function() if rot and pv.setRotation then pv:setRotation(rot) end end)
+    pcall(function() pv:setPosition(travelPos) end)
+    pv:queueLuaCommand([[
+        local zero = vec3({0,0,0})
+        pcall(function() obj:setVelocity(zero) end)
+        pcall(function() obj:setAngularVelocity(zero) end)
+        pcall(function() obj:resetBrokenFlexMesh() end)
+        pcall(function() obj:resetPhysics() end)
+    ]])
+
+    forcePlayerFocus()
+    armFocusReturn(0.75)
+    notify("success", "Quick Travel", "Travelled near '" .. missionDisplayName(point) .. "'.")
+    setBigBanner("QUICK TRAVEL: " .. missionDisplayName(point), 2.0)
+    return true
 end
 
 -- Counts how many positions are needed (one per mission plus one extra per REACH for destPos).
@@ -2395,6 +2456,53 @@ function drawHUD()
     popWindowStyle()
 end
 
+local function drawQuickTravelWindow()
+    if not im or mission or not isMapOrMenuOpen() then return end
+
+    local playerPos = getPlayerPos()
+    if not playerPos then return end
+
+    im.SetNextWindowSize(im.ImVec2(430, 540), im.Cond_Always)
+    im.SetNextWindowPos(anchoredPos("rightMiddle", 430, 540, 24, 24), im.Cond_Always)
+    im.SetNextWindowBgAlpha(0.88)
+    pushWindowStyle({ 0.25, 0.75, 1.0, 0.85 })
+
+    local flags = bit.bor(
+        im.WindowFlags_NoResize,
+        im.WindowFlags_NoMove,
+        im.WindowFlags_NoSavedSettings
+    )
+
+    local drawn = im.Begin("##jonesingQuickTravel", nil, flags)
+    if drawn then
+        if im.SetWindowFontScale then im.SetWindowFontScale(1.0) end
+        im.TextColored(im.ImVec4(0.72, 0.90, 1.0, 1.0), "  QUICK TRAVEL")
+        im.Separator()
+        im.TextColored(im.ImVec4(0.80, 0.80, 0.80, 1.0), "  Click a mission to jump near its marker.")
+
+        for _, mp in ipairs(missionPoints) do
+            local dist = playerPos:distance(mp.pos)
+            local dir = compassDir(mp.pos.x - playerPos.x, mp.pos.y - playerPos.y)
+            local tag, tc = typeStyle(mp.type)
+            local buttonLabel = string.format("  [ TRAVEL ]##travel_%s", tostring(mp.name))
+            if im.Button(buttonLabel) then
+                quickTravelToMissionPoint(mp)
+            end
+            im.TextColored(tc, string.format("  [%s] %s", tag, missionDisplayName(mp)))
+            im.TextColored(im.ImVec4(0.72, 0.72, 0.72, 1.0),
+                string.format("       %s  %s", dir, formatMeters(dist)))
+            local cd = missionCooldowns[mp.name] or 0
+            if cd > 0 then
+                im.TextColored(im.ImVec4(0.55, 0.55, 0.55, 1.0),
+                    string.format("       Cooldown: %ds", math.ceil(cd)))
+            end
+            im.Separator()
+        end
+    end
+    im.End()
+    popWindowStyle()
+end
+
 
 imguiColor = nil
 
@@ -2759,9 +2867,10 @@ function drawTargetArrows(playerPos)
 end
 
 function drawJonesingUI()
-    -- Hide all custom UI while paused/menu is open. This keeps the pause/menu screen clean.
-    if isGamePaused() then return end
+    if isGamePaused() and not isMapOrMenuOpen() then return end
     local playerPos = getPlayerPos()
+    drawQuickTravelWindow()
+    if isGamePaused() then return end
     drawHUD()
     drawRadar(playerPos)
     drawBottomBanner(playerPos)
@@ -2977,6 +3086,62 @@ function tickTeleportPolice(playerPos, dt)
                         "ai.setMode('chase'); ai.setTargetObjectID(" .. tostring(playerID) .. "); ai.driveInLane('off')"
                     )
                 end
+            end
+        end
+    end
+end
+
+local function recoverRaceRacerInPlace(racerVeh, state, waypoint)
+    if not racerVeh or not state or not waypoint then return end
+
+    local pos = racerVeh:getPosition()
+    pcall(function() racerVeh:setPosition(vec3(pos.x, pos.y, pos.z + 0.35)) end)
+    racerVeh:queueLuaCommand([[
+        local zero = vec3({0,0,0})
+        pcall(function() obj:setVelocity(zero) end)
+        pcall(function() obj:setAngularVelocity(zero) end)
+        pcall(function() obj:resetBrokenFlexMesh() end)
+        pcall(function() obj:resetPhysics() end)
+    ]])
+
+    if state.baitId then
+        moveRaceBaitToWaypoint(state.baitId, waypoint)
+        queueRaceChaseBaitAI(racerVeh, state.baitId, waypoint)
+        state.aiInitialized = true
+    end
+
+    state.stuckSecs = 0
+    state.recoveryCooldown = RACE_RECOVERY_COOLDOWN
+    state.lastPos = nil
+end
+
+local function tickRaceRacerRecovery(playerPos, dt)
+    if not mission or not playerPos or not mission.raceRacers or not mission.rallyWaypoints then return end
+
+    for vid, state in pairs(mission.raceRacers) do
+        if not state.finished then
+            state.recoveryCooldown = math.max(0, (state.recoveryCooldown or 0) - dt)
+
+            local racerVeh = be:getObjectByID(vid)
+            local wp = mission.rallyWaypoints[state.idx or 1]
+            if racerVeh and wp then
+                local pos = racerVeh:getPosition()
+                local dist = playerPos:distance(pos)
+                local moved = state.lastPos and pos:distance(state.lastPos) or math.huge
+                local actualSpeed = moved ~= math.huge and (moved / math.max(dt, 0.001)) or math.huge
+                state.lastPos = vec3(pos.x, pos.y, pos.z)
+
+                if dist > RACE_RECOVERY_DISTANCE and actualSpeed < RACE_RECOVERY_STOPPED_SPEED then
+                    state.stuckSecs = (state.stuckSecs or 0) + dt
+                    if state.stuckSecs >= RACE_RECOVERY_STOPPED_TIME and (state.recoveryCooldown or 0) <= 0 then
+                        recoverRaceRacerInPlace(racerVeh, state, wp)
+                    end
+                else
+                    state.stuckSecs = 0
+                end
+            else
+                state.stuckSecs = 0
+                state.lastPos = nil
             end
         end
     end
@@ -3301,6 +3466,8 @@ function M._frameOps.updateActiveMission(dt, playerPos)
         end
 
     elseif mtype == RACE then
+        tickRaceRacerRecovery(playerPos, dt)
+
         if mission.raceRacers then
             for vid, state in pairs(mission.raceRacers) do
                 if not state.finished then
@@ -3429,6 +3596,7 @@ function M.onUpdate(dt, dtSim)
     M._frameOps.tickMissionCooldowns(dt)
     M._frameOps.drawMissionMarkers(playerPos)
     if isMissionUpdateBlocked() then
+        drawQuickTravelWindow()
         return
     end
     M._frameOps.tryStartNearbyMission(playerPos)
