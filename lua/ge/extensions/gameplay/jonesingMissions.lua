@@ -299,6 +299,7 @@ initTimer = 0     -- seconds spent waiting for map data
 loaderHideTimer = 0     -- keeps loader visible briefly after heavy spawn work
 hudMsgTimer = 0     -- throttles built-in guihooks HUD fallback
 focusReturnTimer = 0     -- repeatedly returns focus to player after AI spawns
+focusReturnPulseTimer = 0 -- throttles repeated focus steals while timer is active
 loaderActive = false -- custom ImGui loader overlay; survives when built-in loader fails
 loaderLabel = "Loading..."
 bigBannerText = ""
@@ -310,6 +311,11 @@ missionStartHome = nil
 radarRoadPositions = {}
 radarRoadSegments = {}
 getPlayerVehicle = nil -- forward declaration used by helpers above the concrete function
+local GAME_MODE_MENU = "menu"
+local GAME_MODE_STARTING = "mission_starting"
+local GAME_MODE_ACTIVE = "mission_active"
+local GAME_MODE_IDLE = "idle"
+local FOCUS_RETURN_PULSE_INTERVAL_SECONDS = 0.20
 
 local function serializeVec3(pos)
     if not pos then return nil end
@@ -803,34 +809,98 @@ function isGamePaused()
         local ok, paused = pcall(fn)
         if ok and paused == true then return true end
     end
+
+    local stateSources = {
+        extensions and extensions.core_gamestate and extensions.core_gamestate.state,
+        extensions and extensions.core_gamestate and extensions.core_gamestate.gameState,
+        core_gamestate and core_gamestate.state,
+        core_gamestate and core_gamestate.gameState,
+    }
+    for _, state in ipairs(stateSources) do
+        if type(state) == "table" and (state.paused == true or state.isPaused == true) then
+            return true
+        end
+    end
+
     return false
 end
 
 local function isMapOrMenuOpen()
-    local state = extensions and extensions.core_gamestate and extensions.core_gamestate.state
-    if type(state) ~= "table" then return false end
-
     local boolKeys = {
         "menuOpen", "isMenuOpen",
         "bigMap", "bigMapOpen", "bigmapOpen", "bigMapActive", "isBigMapOpen",
-        "mapOpen", "isMapOpen"
+        "mapOpen", "isMapOpen",
+        "paused", "isPaused",
+        "menuActive", "inMenu", "isInMenu",
+        "bigMapVisible", "isBigMapVisible",
+        "overlayMapOpen", "isOverlayMapOpen"
     }
-    for _, key in ipairs(boolKeys) do
-        if state[key] == true then return true end
-    end
+    local modeKeys = {
+        "state", "currentState", "mode", "uiState", "gameState"
+    }
+    local stateNeedles = { "menu", "bigmap", "pause", "mapopen", "mapview" }
+    local stateSources = {
+        extensions and extensions.core_gamestate and extensions.core_gamestate.state,
+        extensions and extensions.core_gamestate and extensions.core_gamestate.gameState,
+        core_gamestate and core_gamestate.state,
+        core_gamestate and core_gamestate.gameState,
+        gameplay and gameplay.state
+    }
 
-    local rawState = tostring(state.state or state.currentState or "")
-    if rawState ~= "" then
-        local s = string.lower(rawState)
-        if string.find(s, "menu", 1, true) or string.find(s, "bigmap", 1, true) then
-            return true
+    for _, state in ipairs(stateSources) do
+        if type(state) == "table" then
+            for _, key in ipairs(boolKeys) do
+                if state[key] == true then return true end
+            end
+            for _, key in ipairs(modeKeys) do
+                local rawState = tostring(state[key] or "")
+                if rawState ~= "" then
+                    local s = string.gsub(string.lower(rawState), "_", "")
+                    for _, needle in ipairs(stateNeedles) do
+                        if string.find(s, needle, 1, true) then
+                            return true
+                        end
+                    end
+                end
+            end
         end
     end
+
+    local bigMapProbes = {
+        function() return extensions and extensions.core_bigMap and extensions.core_bigMap.isBigMapOpen and extensions.core_bigMap.isBigMapOpen() end,
+        function() return extensions and extensions.core_bigMap and extensions.core_bigMap.isOpen and extensions.core_bigMap.isOpen() end,
+        function() return extensions and extensions.core_bigMap and extensions.core_bigMap.isActive and extensions.core_bigMap.isActive() end,
+        function() return extensions and extensions.core_bigmap and extensions.core_bigmap.isBigMapOpen and extensions.core_bigmap.isBigMapOpen() end,
+        function() return extensions and extensions.core_bigmap and extensions.core_bigmap.isOpen and extensions.core_bigmap.isOpen() end,
+        function() return extensions and extensions.core_bigmap and extensions.core_bigmap.isActive and extensions.core_bigmap.isActive() end,
+    }
+    for _, fn in ipairs(bigMapProbes) do
+        local ok, open = pcall(fn)
+        if ok and open == true then return true end
+    end
+
     return false
 end
 
 local function isMissionUpdateBlocked()
     return isGamePaused() or isMapOrMenuOpen()
+end
+
+local function gameModeState()
+    if isMissionUpdateBlocked() then return GAME_MODE_MENU end
+    if mission and mission.starting then return GAME_MODE_STARTING end
+    if mission and mission.started then return GAME_MODE_ACTIVE end
+    return GAME_MODE_IDLE
+end
+
+local function clearSpawnedMissionVehicles()
+    for _, vd in ipairs(spawnedVehicles or {}) do
+        local vehObj = scenetree.findObjectById(vd.id)
+        if vehObj and vehObj.delete then
+            pcall(function() vehObj:delete() end)
+        end
+    end
+    spawnedVehicles = {}
 end
 
 -- BeamNG extension callbacks usually provide both real dt and sim dt.
@@ -1073,20 +1143,24 @@ getPlayerVehicle = function()
 end
 
 function forcePlayerFocus()
+    if isMissionUpdateBlocked() then return end
     local pv = getPlayerVehicle()
     if not pv then return end
 
-    -- Spawning vehicles can steal focus in BeamNG.  Re-enter the original player
-    -- vehicle for several frames after spawning so the camera/focus snaps back.
-    pcall(function() be:enterVehicle(0, pv) end)
-
-    if core_camera and core_camera.setByName then
-        pcall(function() core_camera.setByName(0, "orbit") end)
+    local activePlayerVehicleId = nil
+    local pvId = pv.getID and pv:getID() or nil
+    if be and be.getPlayerVehicleID then
+        pcall(function() activePlayerVehicleId = be:getPlayerVehicleID(0) end)
     end
+    -- If BeamNG already reports this as the active player vehicle, skip re-entering it.
+    if pvId and activePlayerVehicleId and pvId == activePlayerVehicleId then return end
+
+    pcall(function() if be and be.enterVehicle then be:enterVehicle(0, pv) end end)
 end
 
 function armFocusReturn(seconds)
     focusReturnTimer = math.max(focusReturnTimer or 0, seconds or 1.0)
+    focusReturnPulseTimer = 0
 end
 
 function showLoader(label)
@@ -1922,11 +1996,13 @@ end
 -- ── Mission lifecycle ──────────────────────────────────────────────────────────
 function startMission(point)
     if mission then return end
+    if isMissionUpdateBlocked() then return end
 
     local playerPos = getPlayerPos()
     if not playerPos then return end
 
-    spawnedVehicles   = {}
+    -- Fail-safe: remove any stale spawned mission vehicles before a new mission starts.
+    clearSpawnedMissionVehicles()
     destroyedTargets  = {}
     playerWrecked     = false
     targetLastPos     = nil
@@ -1958,6 +2034,7 @@ end
 
 function tickPendingMissionStart(dt, playerPos)
     if not mission or not mission.starting then return false end
+    if isMissionUpdateBlocked() then return true end
 
     if spawnedVehicles and #spawnedVehicles > 0 then
         mission.starting = false
@@ -1973,7 +2050,6 @@ function tickPendingMissionStart(dt, playerPos)
     -- Do not let success/fail logic run while the target/police have not spawned yet.
     mission.startDelay = (mission.startDelay or 0) - dt
     showLoader("Starting " .. tostring(mission.point.name) .. "...")
-    forcePlayerFocus()
 
     if mission.startDelay <= 0 then
         runMissionStart(mission.point, playerPos or getPlayerPos())
@@ -1991,11 +2067,7 @@ function cleanupMission(success, failMsg)
 
     -- Despawn all mission-spawned vehicles.
     -- scenetree.findObjectById is used for deletion; be:deleteObjectByID does not exist.
-    for _, vd in ipairs(spawnedVehicles) do
-        local vehObj = scenetree.findObjectById(vd.id)
-        if vehObj then vehObj:delete() end
-    end
-    spawnedVehicles  = {}
+    clearSpawnedMissionVehicles()
     destroyedTargets = {}
     playerWrecked    = false
     targetLastPos    = nil
@@ -3321,7 +3393,7 @@ function M._frameOps.drawMissionMarkers(playerPos)
 end
 
 function M._frameOps.tryStartNearbyMission(playerPos)
-    if mission or not playerPos then return end
+    if mission or not playerPos or isMissionUpdateBlocked() then return end
 
     for _, mp in ipairs(missionPoints) do
         if (missionCooldowns[mp.name] or 0) <= 0 then
@@ -3550,10 +3622,19 @@ function M.onUpdate(dt, dtSim)
 
     -- Resolve player position once per frame.  May be nil (spectator mode, etc.).
     local playerPos = getPlayerPos()
+    local missionBlocked = isMissionUpdateBlocked()
 
     if focusReturnTimer and focusReturnTimer > 0 then
-        focusReturnTimer = math.max(0, focusReturnTimer - dt)
-        forcePlayerFocus()
+        focusReturnTimer = math.max(0, focusReturnTimer - rawDt)
+        if not missionBlocked then
+            focusReturnPulseTimer = (focusReturnPulseTimer or 0) - rawDt
+            if focusReturnPulseTimer <= 0 then
+                forcePlayerFocus()
+                focusReturnPulseTimer = FOCUS_RETURN_PULSE_INTERVAL_SECONDS
+            end
+        end
+    else
+        focusReturnPulseTimer = 0
     end
 
     if loaderHideTimer and loaderHideTimer > 0 then
@@ -3573,12 +3654,10 @@ function M.onUpdate(dt, dtSim)
         return
     end
 
+    if missionBlocked then return end
+
     M._frameOps.tickMissionCooldowns(dt)
     M._frameOps.drawMissionMarkers(playerPos)
-    if isMissionUpdateBlocked() then
-        drawQuickTravelWindow()
-        return
-    end
     M._frameOps.tryStartNearbyMission(playerPos)
     if M._frameOps.updateActiveMission(dt, playerPos) then
         return
