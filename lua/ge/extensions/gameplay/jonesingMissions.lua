@@ -853,11 +853,11 @@ local function isMapOrMenuOpen()
                 local rawState = tostring(state[key] or "")
                 if rawState ~= "" then
                     local s = string.lower(rawState)
-                    if string.find(s, "menu", 1, true)
-                        or string.find(s, "bigmap", 1, true)
-                        or string.find(s, "map", 1, true)
-                        or string.find(s, "pause", 1, true) then
-                        return true
+                    local needles = { "menu", "bigmap", "big_map", "pause", "mapopen", "map_open", "mapview", "map_view" }
+                    for _, needle in ipairs(needles) do
+                        if string.find(s, needle, 1, true) then
+                            return true
+                        end
                     end
                 end
             end
