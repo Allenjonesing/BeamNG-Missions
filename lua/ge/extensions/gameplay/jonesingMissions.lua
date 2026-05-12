@@ -315,7 +315,7 @@ local GAME_MODE_MENU = "menu"
 local GAME_MODE_STARTING = "mission_starting"
 local GAME_MODE_ACTIVE = "mission_active"
 local GAME_MODE_IDLE = "idle"
-local FOCUS_RETURN_PULSE_INTERVAL = 0.20
+local FOCUS_RETURN_PULSE_INTERVAL_SECONDS = 0.20
 
 local function serializeVec3(pos)
     if not pos then return nil end
@@ -3630,7 +3630,7 @@ function M.onUpdate(dt, dtSim)
             focusReturnPulseTimer = (focusReturnPulseTimer or 0) - rawDt
             if focusReturnPulseTimer <= 0 then
                 forcePlayerFocus()
-                focusReturnPulseTimer = FOCUS_RETURN_PULSE_INTERVAL
+                focusReturnPulseTimer = FOCUS_RETURN_PULSE_INTERVAL_SECONDS
             end
         end
     else
