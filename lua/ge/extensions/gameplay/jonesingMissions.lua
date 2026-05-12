@@ -168,7 +168,7 @@ ESCAPE_TIME_LIMIT = 120    -- seconds before ESCAPE mission fails
 MISSION_COOLDOWN = 10     -- seconds before the same marker can re-trigger
 ESCAPE_MIN_DISTANCE = 500    -- metres: all police beyond this = escaped (ESCAPE win)
 CHASE_DAMAGE_THRESH = 0.50   -- damage fraction that counts as "destroyed"
-CHASE_ESCAPE_DISTANCE = 300    -- metres: target beyond this = got away (CHASE fail)
+CHASE_ESCAPE_DISTANCE = 1000    -- metres: target beyond this = got away (CHASE fail)
 CHASE_SPAWN_OFFSET = 50     -- metres ahead of player to spawn the target
 CHASE_TARGET_MODEL = "etk800"
 CHASE_STOPPED_SPEED = 3.0    -- m/s: below this the target is considered stopped
@@ -224,12 +224,12 @@ RALLY_WAYPOINT_SPREAD = { min = 150, max = 400 }     -- metres: min and max dist
 -- RACE mission tuning (AI racers + ordered checkpoints, no timer)
 RACE_CHECKPOINT_COUNT = 5       -- total checkpoints in the street race
 RACE_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
-RACE_WAYPOINT_SPREAD = { min = 50, max = 100 }     -- metres: min and max distance between successive waypoints
+RACE_WAYPOINT_SPREAD = { min = 20, max = 50 }     -- metres: min and max distance between successive waypoints
 RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
 RACE_SPAWN_RADIUS = { min = 3, max = 10 }
-RACE_AI_SPEED = 100
-RACE_AI_AGGRESSION = 0.85
-RACE_RECOVERY_DISTANCE = 180
+RACE_AI_SPEED = { min = 92, max = 108 }
+RACE_AI_AGGRESSION = { min = 0.45, max = 0.75 }
+RACE_RECOVERY_DISTANCE = 250
 RACE_RECOVERY_STOPPED_SPEED = 3.0
 RACE_RECOVERY_STOPPED_TIME = 4.0
 RACE_RECOVERY_COOLDOWN = 8.0
@@ -1615,7 +1615,7 @@ function generateRallyWaypoints(startPos, count, min, max)
     local prevPos   = startPos
 
     -- Try to pull positions from the road graph for realistic placement
-    local roadPositions = findRandomRoadPositions(count + 5, 100)
+    local roadPositions = findRandomRoadPositions(count + 5, max)
 
     if roadPositions and #roadPositions >= count then
         -- Sort by distance from startPos and pick the first `count`
@@ -1641,6 +1641,18 @@ function generateRallyWaypoints(startPos, count, min, max)
         table.insert(waypoints, wp)
         prevPos = wp
     end
+
+    return waypoints
+end
+
+function sortWaypointsByStartDistance(startPos, waypoints)
+    if not startPos or type(waypoints) ~= "table" or #waypoints < 2 then return waypoints end
+
+    table.sort(waypoints, function(a, b)
+        if not a then return false end
+        if not b then return true end
+        return startPos:distance(a) < startPos:distance(b)
+    end)
 
     return waypoints
 end
@@ -1684,64 +1696,29 @@ function tableSize(t)
     return n
 end
 
-function freezeRaceBaitVehicle(veh)
-    if not veh then return end
-    veh:queueLuaCommand([[
-        pcall(function() ai.setMode('disabled') end)
-        pcall(function() electrics.values.throttle = 0 end)
-        pcall(function() electrics.values.brake = 1 end)
-        pcall(function() electrics.values.parkingbrake = 1 end)
-        local zero = vec3({0,0,0})
-        pcall(function() obj:setVelocity(zero) end)
-        pcall(function() obj:setAngularVelocity(zero) end)
-    ]])
-end
+function getRaceRacerAiConfig(racerIndex)
+    local speedMin = (type(RACE_AI_SPEED) == "table" and tonumber(RACE_AI_SPEED.min)) or tonumber(RACE_AI_SPEED) or 100
+    local speedMax = (type(RACE_AI_SPEED) == "table" and tonumber(RACE_AI_SPEED.max)) or speedMin
+    local aggressionMin = (type(RACE_AI_AGGRESSION) == "table" and tonumber(RACE_AI_AGGRESSION.min)) or tonumber(RACE_AI_AGGRESSION) or 0.55
+    local aggressionMax = (type(RACE_AI_AGGRESSION) == "table" and tonumber(RACE_AI_AGGRESSION.max)) or aggressionMin
 
-function spawnRaceBaitVehicle(waypoint, racerIndex)
-    if not waypoint then return nil end
+    if speedMax < speedMin then speedMin, speedMax = speedMax, speedMin end
+    if aggressionMax < aggressionMin then aggressionMin, aggressionMax = aggressionMax, aggressionMin end
 
-    -- This bait vehicle exists only so race AI can use the same reliable
-    -- object-chase behavior as police. It is buried slightly below the checkpoint
-    -- and frozen so the racer has an object ID to chase without a visible target car
-    -- sitting in the road.
-    local baitPos = vec3({
-        waypoint.x,
-        waypoint.y,
-        waypoint.z - 4.0
-    })
-
-    local veh = core_vehicles.spawnNewVehicle("covet", {
-        pos = baitPos,
-        rot = quat(0, 0, 0, 1),
-        color = "0 0 0 0",
-        autoEnterVehicle = false,
-    })
-
-    if veh then
-        freezeRaceBaitVehicle(veh)
-        log("I", "jonesingMissions",
-            string.format("Race bait spawned for racer %s at checkpoint target", tostring(racerIndex or "?")))
-    else
-        log("W", "jonesingMissions", "Race bait spawn failed.")
+    local speed = speedMin
+    local aggression = aggressionMin
+    if speedMax > speedMin then
+        speed = speedMin + math.random() * (speedMax - speedMin)
+    end
+    if aggressionMax > aggressionMin then
+        aggression = aggressionMin + math.random() * (aggressionMax - aggressionMin)
     end
 
-    return veh
-end
-
-function moveRaceBaitToWaypoint(baitId, waypoint)
-    if not baitId or not waypoint then return end
-
-    local bait = scenetree.findObjectById(baitId) or be:getObjectByID(baitId)
-    if not bait then return end
-
-    local baitPos = vec3({
-        waypoint.x,
-        waypoint.y,
-        waypoint.z - 4.0
-    })
-
-    pcall(function() bait:setPosition(baitPos) end)
-    freezeRaceBaitVehicle(bait)
+    return {
+        speed = speed,
+        aggression = aggression,
+        racerIndex = racerIndex,
+    }
 end
 
 function getRaceRoadTargets(targetPos)
@@ -1757,44 +1734,64 @@ function getRaceRoadTargets(targetPos)
     return targets
 end
 
-function buildRaceAiRoute(targetPos)
-    local wpTargets = getRaceRoadTargets(targetPos)
+function appendRaceRoadTargets(targetList, targetPos)
+    local roadTargets = getRaceRoadTargets(targetPos)
+    if not roadTargets then return end
+
+    for _, target in ipairs(roadTargets) do
+        if target and targetList[#targetList] ~= target then
+            table.insert(targetList, target)
+        end
+    end
+end
+
+function buildRaceAiRoute(waypoints, startIdx, aiConfig)
+    local wpTargets = {}
+    local firstIdx = math.max(1, tonumber(startIdx) or 1)
+
+    if type(waypoints) ~= "table" then return nil end
+
+    for i = firstIdx, #waypoints do
+        appendRaceRoadTargets(wpTargets, waypoints[i])
+    end
+
     if not wpTargets or #wpTargets == 0 then return nil end
 
+    local aggression = aiConfig and tonumber(aiConfig.aggression) or ((type(RACE_AI_AGGRESSION) == "table" and tonumber(RACE_AI_AGGRESSION.min)) or tonumber(RACE_AI_AGGRESSION) or 0.55)
+
     return "{wpTargetList = " .. serializeLuaValue(wpTargets)
-    .. ", noOfLaps = 1, aggression = " .. tostring(RACE_AI_AGGRESSION)
+    .. ", noOfLaps = 1, aggression = " .. tostring(aggression)
     .. ", avoidCars = \"off\", driveInLane = \"on\", speedMode = \"set\"}"
 end
 
-function queueRaceChaseBaitAI(veh, baitId, targetPos)
-    if not veh or not baitId then return end
+function queueRaceWaypointAI(veh, waypoints, startIdx, aiConfig)
+    if not veh then return false end
 
-    local route = buildRaceAiRoute(targetPos)
+    local speed = aiConfig and tonumber(aiConfig.speed) or ((type(RACE_AI_SPEED) == "table" and tonumber(RACE_AI_SPEED.min)) or tonumber(RACE_AI_SPEED) or 100)
+    local route = buildRaceAiRoute(waypoints, startIdx, aiConfig)
     if route then
         veh:queueLuaCommand(
             "pcall(function() ai.setMode('disabled') end); " ..
             "pcall(function() ai.driveInLane('on') end); " ..
             "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
             "pcall(function() ai.setSpeedMode('set') end); " ..
-            "pcall(function() ai.setSpeed(" .. tostring(RACE_AI_SPEED) .. ") end); " ..
+            "pcall(function() ai.setSpeed(" .. tostring(speed) .. ") end); " ..
             "pcall(function() ai.setParameters({turnForceCoef = 3.2, awarenessForceCoef = 0.45}) end); " ..
-            "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
             "pcall(function() ai.driveUsingPath(" .. route .. ") end)"
         )
-        return
+        return true
     end
 
-    -- Fallback when no usable road target can be derived.
     veh:queueLuaCommand(
         "pcall(function() ai.setMode('disabled') end); " ..
-        "pcall(function() ai.setMode('chase') end); " ..
-        "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
+        "pcall(function() ai.setState({mode = 'traffic'}) end); " ..
         "pcall(function() ai.driveInLane('on') end); " ..
         "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
         "pcall(function() ai.setSpeedMode('set') end); " ..
-        "pcall(function() ai.setSpeed(" .. tostring(RACE_AI_SPEED) .. ") end); " ..
+        "pcall(function() ai.setSpeed(" .. tostring(speed) .. ") end); " ..
         "pcall(function() ai.setParameters({turnForceCoef = 3.2, awarenessForceCoef = 0.45}) end)"
     )
+    return false
 end
 
 function spawnRaceVehicle(playerVeh, racerIndex)
@@ -1850,45 +1847,35 @@ function startRace(point, playerPos)
     local waypointCount = point.waypointCount or RACE_CHECKPOINT_COUNT
 
     mission.rallyWaypoints = generateRallyWaypoints(playerPos, waypointCount, RACE_WAYPOINT_SPREAD.min, RACE_WAYPOINT_SPREAD.max)
+    sortWaypointsByStartDistance(playerPos, mission.rallyWaypoints)
     mission.rallyCurrentIdx = 1
     mission.raceRacers = {}
     mission.raceFinishCount = 0
 
     for i = 1, RACE_RACER_COUNT do
         local veh = spawnRaceVehicle(playerVeh, i)
-        local firstWp = mission.rallyWaypoints and mission.rallyWaypoints[1]
-        local bait = spawnRaceBaitVehicle(firstWp, i)
 
-        if veh and bait then
+        if veh then
             local vid = veh:getID()
-            local baitId = bait:getID()
-            if vid and baitId then
+            if vid then
+                local aiConfig = getRaceRacerAiConfig(i)
                 addSpawnedVehicle(vid, "racer")
-                addSpawnedVehicle(baitId, "raceBait")
                 mission.raceRacers[vid] = {
                     idx = 1,
                     finished = false,
-                    baitId = baitId,
+                    aiConfig = aiConfig,
                     aiInitialized = false,
                     racerIndex = i,
                 }
-                moveRaceBaitToWaypoint(baitId, firstWp)
-                queueRaceChaseBaitAI(veh, baitId, firstWp)
-                mission.raceRacers[vid].aiInitialized = true
+                mission.raceRacers[vid].aiInitialized = queueRaceWaypointAI(veh, mission.rallyWaypoints, 1, aiConfig)
             end
-        elseif veh then
-            local vid = veh:getID()
-            if vid then addSpawnedVehicle(vid, "racer") end
-        elseif bait then
-            local baitId = bait:getID()
-            if baitId then addSpawnedVehicle(baitId, "raceBait") end
         end
     end
 
     local racerCount = tableSize(mission.raceRacers or {})
 
     if racerCount == 0 then
-        cleanupMission(false, "No race opponents or race bait targets could spawn.")
+        cleanupMission(false, "No race opponents could spawn.")
         return
     end
 
@@ -3104,11 +3091,7 @@ local function recoverRaceRacerInPlace(racerVeh, state, waypoint)
         pcall(function() obj:resetPhysics() end)
     ]])
 
-    if state.baitId then
-        moveRaceBaitToWaypoint(state.baitId, waypoint)
-        queueRaceChaseBaitAI(racerVeh, state.baitId, waypoint)
-        state.aiInitialized = true
-    end
+    state.aiInitialized = queueRaceWaypointAI(racerVeh, mission and mission.rallyWaypoints, state.idx or 1, state.aiConfig)
 
     state.stuckSecs = 0
     state.recoveryCooldown = RACE_RECOVERY_COOLDOWN
@@ -3477,9 +3460,7 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                         local wp = mission.rallyWaypoints and mission.rallyWaypoints[idx]
                         if wp then
                             if not state.aiInitialized then
-                                moveRaceBaitToWaypoint(state.baitId, wp)
-                                queueRaceChaseBaitAI(v, state.baitId, wp)
-                                state.aiInitialized = true
+                                state.aiInitialized = queueRaceWaypointAI(v, mission.rallyWaypoints, idx, state.aiConfig)
                             end
                             local pos = v:getPosition()
                             local dx = pos.x - wp.x
@@ -3493,8 +3474,7 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                                     state.idx = idx + 1
                                     local nextWp = mission.rallyWaypoints[state.idx]
                                     if nextWp then
-                                        moveRaceBaitToWaypoint(state.baitId, nextWp)
-                                        queueRaceChaseBaitAI(v, state.baitId, nextWp)
+                                        state.aiInitialized = queueRaceWaypointAI(v, mission.rallyWaypoints, state.idx, state.aiConfig)
                                     end
                                 end
                             end
