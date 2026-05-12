@@ -16,8 +16,10 @@
 -- Mission markers are placed on valid roadways using the map navigation graph so
 -- they are always accessible by vehicle.  Positions are randomised each session.
 --
--- A larger ImGui HUD panel now sits left-middle, with a right-middle radar,
--- bottom-center objective banner, custom loader overlay, target arrows, pause-hidden UI, camera-relative radar, roads overlay,
+-- A polished ImGui HUD panel now sits left-middle (rounded corners, gold border, larger font),
+-- with a right-middle radar (rounded corners, blue border, arrow-only player marker, no "YOU" label),
+-- bottom-center objective banner (rounded corners, gold border), custom loader overlay,
+-- target arrows, pause-hidden UI, camera-relative radar, roads overlay,
 -- pause-safe mission timers, and one-unlocked-mission-per-type tier progression.
 
 local M = {}
@@ -166,7 +168,7 @@ ESCAPE_TIME_LIMIT = 120    -- seconds before ESCAPE mission fails
 MISSION_COOLDOWN = 10     -- seconds before the same marker can re-trigger
 ESCAPE_MIN_DISTANCE = 500    -- metres: all police beyond this = escaped (ESCAPE win)
 CHASE_DAMAGE_THRESH = 0.50   -- damage fraction that counts as "destroyed"
-CHASE_ESCAPE_DISTANCE = 300    -- metres: target beyond this = got away (CHASE fail)
+CHASE_ESCAPE_DISTANCE = 1000    -- metres: target beyond this = got away (CHASE fail)
 CHASE_SPAWN_OFFSET = 50     -- metres ahead of player to spawn the target
 CHASE_TARGET_MODEL = "etk800"
 CHASE_STOPPED_SPEED = 3.0    -- m/s: below this the target is considered stopped
@@ -222,11 +224,15 @@ RALLY_WAYPOINT_SPREAD = { min = 150, max = 400 }     -- metres: min and max dist
 -- RACE mission tuning (AI racers + ordered checkpoints, no timer)
 RACE_CHECKPOINT_COUNT = 5       -- total checkpoints in the street race
 RACE_CHECKPOINT_RADIUS = 25      -- metres: arriving within this of a waypoint = hit
-RACE_WAYPOINT_SPREAD = { min = 50, max = 100 }     -- metres: min and max distance between successive waypoints
+RACE_WAYPOINT_SPREAD = { min = 20, max = 50 }     -- metres: min and max distance between successive waypoints
 RACE_RACER_COUNT = 3       -- number of AI racers spawned for the event
 RACE_SPAWN_RADIUS = { min = 3, max = 10 }
-RACE_AI_SPEED = 100
-RACE_AI_AGGRESSION = 0.85
+RACE_AI_SPEED = { min = 92, max = 108 }
+RACE_AI_AGGRESSION = { min = 0.45, max = 0.75 }
+RACE_RECOVERY_DISTANCE = 250
+RACE_RECOVERY_STOPPED_SPEED = 3.0
+RACE_RECOVERY_STOPPED_TIME = 4.0
+RACE_RECOVERY_COOLDOWN = 8.0
 RACE_VARIANTS = {
     { model = "etk800",   label = "ETK 800",          color = "0.90 0.20 0.10 1" },
     { model = "covet",    label = "Covet",            color = "0.20 0.85 0.35 1" },
@@ -236,6 +242,8 @@ RACE_VARIANTS = {
 -- CRUISE mission tuning (single far destination, no police, player chooses route)
 CRUISE_TIME_LIMIT = 300     -- seconds to reach the destination
 CRUISE_RADIUS = 25      -- metres: arriving within this of destPos = success
+
+MISSION_QUICK_TRAVEL_OFFSET = 20
 
 -- Player damage tracking (ESCAPE / ENDURE / REACH fail condition)
 PLAYER_DAMAGE_THRESH = 0.70   -- player vehicle wrecked at this damage level
@@ -268,7 +276,7 @@ INIT_TIMEOUT = 5.0    -- seconds to wait for map data before using fallback posi
 
 -- HUD constants
 HUD_WINDOW_WIDTH = 540
-HUD_SCALE = 1.50
+HUD_SCALE = 1.70
 RADAR_WINDOW_SIZE = 320
 RADAR_RANGE_METERS = 250
 RADAR_ROAD_DRAW_LIMIT = 120
@@ -916,23 +924,27 @@ function setBigBanner(text, seconds)
     bigBannerTimer = math.max(bigBannerTimer or 0, seconds or 3.0)
 end
 
-function saveMissionStartHome()
+local function setPlayerRecoveryHome(pos, rot)
     local pv = getPlayerVehicle and getPlayerVehicle()
-    if not pv then return end
-    local pos = pv:getPosition()
-    local rot = nil
-    pcall(function() rot = pv:getRotation() end)
-    missionStartHome = { id = pv:getID(), pos = vec3(pos.x, pos.y, pos.z + 0.35), rot = rot }
+    if not pv or not pos then return end
 
-    -- Best-effort hooks for BeamNG's recovery/home system.  BeamNG exposes these
-    -- differently across versions, so we try the common names but keep our own
-    -- missionStartHome copy as a fallback/reference.
+    missionStartHome = { id = pv:getID(), pos = vec3(pos.x, pos.y, pos.z), rot = rot }
+
     pcall(function() if core_recovery and core_recovery.setHome then core_recovery.setHome(pv:getID()) end end)
     pcall(function() if core_recovery and core_recovery.saveHome then core_recovery.saveHome(pv:getID()) end end)
     pcall(function() if core_recovery and core_recovery.setSpawnPoint then core_recovery.setSpawnPoint(pv:getID(), missionStartHome.pos, missionStartHome.rot) end end)
     pcall(function() if core_recovery and core_recovery.setVehicleHome then core_recovery.setVehicleHome(pv:getID(), missionStartHome.pos, missionStartHome.rot) end end)
     pcall(function() if gameplay_recovery and gameplay_recovery.setHome then gameplay_recovery.setHome(pv:getID()) end end)
     pcall(function() if gameplay_recovery and gameplay_recovery.saveHome then gameplay_recovery.saveHome(pv:getID()) end end)
+end
+
+function saveMissionStartHome()
+    local pv = getPlayerVehicle and getPlayerVehicle()
+    if not pv then return end
+    local pos = pv:getPosition()
+    local rot = nil
+    pcall(function() rot = pv:getRotation() end)
+    setPlayerRecoveryHome(vec3(pos.x, pos.y, pos.z + 0.35), rot)
 end
 
 function recoverPlayerToMissionStart()
@@ -968,6 +980,57 @@ function stopPlayerVehicle()
         pcall(function() obj:resetBrokenFlexMesh() end)
         pcall(function() obj:resetPhysics() end)
     ]])
+end
+
+local function quickTravelToMissionPoint(point)
+    if mission or not point or not point.pos then return false end
+
+    local pv = getPlayerVehicle and getPlayerVehicle()
+    local playerPos = getPlayerPos()
+    if not pv or not playerPos then return false end
+
+    local dirX = point.pos.x - playerPos.x
+    local dirY = point.pos.y - playerPos.y
+    local len = math.sqrt(dirX * dirX + dirY * dirY)
+    if len < 0.001 then
+        local forward = nil
+        pcall(function() forward = pv:getDirectionVector() end)
+        if forward then
+            dirX = forward.x
+            dirY = forward.y
+            len = math.sqrt(dirX * dirX + dirY * dirY)
+        end
+    end
+    if len < 0.001 then
+        dirX, dirY, len = 0, 1, 1
+    end
+
+    local offset = (point.triggerRadius or 12) + MISSION_QUICK_TRAVEL_OFFSET
+    local travelPos = vec3({
+        point.pos.x - (dirX / len) * offset,
+        point.pos.y - (dirY / len) * offset,
+        point.pos.z + 0.35
+    })
+    travelPos = snapToGround(travelPos, point.pos) or travelPos
+
+    local rot = nil
+    pcall(function() rot = pv:getRotation() end)
+    setPlayerRecoveryHome(travelPos, rot)
+    pcall(function() if rot and pv.setRotation then pv:setRotation(rot) end end)
+    pcall(function() pv:setPosition(travelPos) end)
+    pv:queueLuaCommand([[
+        local zero = vec3({0,0,0})
+        pcall(function() obj:setVelocity(zero) end)
+        pcall(function() obj:setAngularVelocity(zero) end)
+        pcall(function() obj:resetBrokenFlexMesh() end)
+        pcall(function() obj:resetPhysics() end)
+    ]])
+
+    forcePlayerFocus()
+    armFocusReturn(0.75)
+    notify("success", "Quick Travel", "Travelled near '" .. missionDisplayName(point) .. "'.")
+    setBigBanner("QUICK TRAVEL: " .. missionDisplayName(point), 2.0)
+    return true
 end
 
 -- Counts how many positions are needed (one per mission plus one extra per REACH for destPos).
@@ -1605,7 +1668,7 @@ function generateRallyWaypoints(startPos, count, min, max)
     local prevPos   = startPos
 
     -- Try to pull positions from the road graph for realistic placement
-    local roadPositions = findRandomRoadPositions(count + 5, 100)
+    local roadPositions = findRandomRoadPositions(count + 5, max)
 
     if roadPositions and #roadPositions >= count then
         -- Sort by distance from startPos and pick the first `count`
@@ -1631,6 +1694,18 @@ function generateRallyWaypoints(startPos, count, min, max)
         table.insert(waypoints, wp)
         prevPos = wp
     end
+
+    return waypoints
+end
+
+function sortWaypointsByStartDistance(startPos, waypoints)
+    if not startPos or type(waypoints) ~= "table" or #waypoints < 2 then return waypoints end
+
+    table.sort(waypoints, function(a, b)
+        if not a then return false end
+        if not b then return true end
+        return startPos:distance(a) < startPos:distance(b)
+    end)
 
     return waypoints
 end
@@ -1674,64 +1749,29 @@ function tableSize(t)
     return n
 end
 
-function freezeRaceBaitVehicle(veh)
-    if not veh then return end
-    veh:queueLuaCommand([[
-        pcall(function() ai.setMode('disabled') end)
-        pcall(function() electrics.values.throttle = 0 end)
-        pcall(function() electrics.values.brake = 1 end)
-        pcall(function() electrics.values.parkingbrake = 1 end)
-        local zero = vec3({0,0,0})
-        pcall(function() obj:setVelocity(zero) end)
-        pcall(function() obj:setAngularVelocity(zero) end)
-    ]])
-end
+function getRaceRacerAiConfig(racerIndex)
+    local speedMin = (type(RACE_AI_SPEED) == "table" and tonumber(RACE_AI_SPEED.min)) or tonumber(RACE_AI_SPEED) or 100
+    local speedMax = (type(RACE_AI_SPEED) == "table" and tonumber(RACE_AI_SPEED.max)) or speedMin
+    local aggressionMin = (type(RACE_AI_AGGRESSION) == "table" and tonumber(RACE_AI_AGGRESSION.min)) or tonumber(RACE_AI_AGGRESSION) or 0.55
+    local aggressionMax = (type(RACE_AI_AGGRESSION) == "table" and tonumber(RACE_AI_AGGRESSION.max)) or aggressionMin
 
-function spawnRaceBaitVehicle(waypoint, racerIndex)
-    if not waypoint then return nil end
+    if speedMax < speedMin then speedMin, speedMax = speedMax, speedMin end
+    if aggressionMax < aggressionMin then aggressionMin, aggressionMax = aggressionMax, aggressionMin end
 
-    -- This bait vehicle exists only so race AI can use the same reliable
-    -- object-chase behavior as police. It is buried slightly below the checkpoint
-    -- and frozen so the racer has an object ID to chase without a visible target car
-    -- sitting in the road.
-    local baitPos = vec3({
-        waypoint.x,
-        waypoint.y,
-        waypoint.z - 4.0
-    })
-
-    local veh = core_vehicles.spawnNewVehicle("covet", {
-        pos = baitPos,
-        rot = quat(0, 0, 0, 1),
-        color = "0 0 0 0",
-        autoEnterVehicle = false,
-    })
-
-    if veh then
-        freezeRaceBaitVehicle(veh)
-        log("I", "jonesingMissions",
-            string.format("Race bait spawned for racer %s at checkpoint target", tostring(racerIndex or "?")))
-    else
-        log("W", "jonesingMissions", "Race bait spawn failed.")
+    local speed = speedMin
+    local aggression = aggressionMin
+    if speedMax > speedMin then
+        speed = speedMin + math.random() * (speedMax - speedMin)
+    end
+    if aggressionMax > aggressionMin then
+        aggression = aggressionMin + math.random() * (aggressionMax - aggressionMin)
     end
 
-    return veh
-end
-
-function moveRaceBaitToWaypoint(baitId, waypoint)
-    if not baitId or not waypoint then return end
-
-    local bait = scenetree.findObjectById(baitId) or be:getObjectByID(baitId)
-    if not bait then return end
-
-    local baitPos = vec3({
-        waypoint.x,
-        waypoint.y,
-        waypoint.z - 4.0
-    })
-
-    pcall(function() bait:setPosition(baitPos) end)
-    freezeRaceBaitVehicle(bait)
+    return {
+        speed = speed,
+        aggression = aggression,
+        racerIndex = racerIndex,
+    }
 end
 
 function getRaceRoadTargets(targetPos)
@@ -1747,44 +1787,64 @@ function getRaceRoadTargets(targetPos)
     return targets
 end
 
-function buildRaceAiRoute(targetPos)
-    local wpTargets = getRaceRoadTargets(targetPos)
+function appendRaceRoadTargets(targetList, targetPos)
+    local roadTargets = getRaceRoadTargets(targetPos)
+    if not roadTargets then return end
+
+    for _, target in ipairs(roadTargets) do
+        if target and targetList[#targetList] ~= target then
+            table.insert(targetList, target)
+        end
+    end
+end
+
+function buildRaceAiRoute(waypoints, startIdx, aiConfig)
+    local wpTargets = {}
+    local firstIdx = math.max(1, tonumber(startIdx) or 1)
+
+    if type(waypoints) ~= "table" then return nil end
+
+    for i = firstIdx, #waypoints do
+        appendRaceRoadTargets(wpTargets, waypoints[i])
+    end
+
     if not wpTargets or #wpTargets == 0 then return nil end
 
+    local aggression = aiConfig and tonumber(aiConfig.aggression) or ((type(RACE_AI_AGGRESSION) == "table" and tonumber(RACE_AI_AGGRESSION.min)) or tonumber(RACE_AI_AGGRESSION) or 0.55)
+
     return "{wpTargetList = " .. serializeLuaValue(wpTargets)
-    .. ", noOfLaps = 1, aggression = " .. tostring(RACE_AI_AGGRESSION)
+    .. ", noOfLaps = 1, aggression = " .. tostring(aggression)
     .. ", avoidCars = \"off\", driveInLane = \"on\", speedMode = \"set\"}"
 end
 
-function queueRaceChaseBaitAI(veh, baitId, targetPos)
-    if not veh or not baitId then return end
+function queueRaceWaypointAI(veh, waypoints, startIdx, aiConfig)
+    if not veh then return false end
 
-    local route = buildRaceAiRoute(targetPos)
+    local speed = aiConfig and tonumber(aiConfig.speed) or ((type(RACE_AI_SPEED) == "table" and tonumber(RACE_AI_SPEED.min)) or tonumber(RACE_AI_SPEED) or 100)
+    local route = buildRaceAiRoute(waypoints, startIdx, aiConfig)
     if route then
         veh:queueLuaCommand(
             "pcall(function() ai.setMode('disabled') end); " ..
             "pcall(function() ai.driveInLane('on') end); " ..
             "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
             "pcall(function() ai.setSpeedMode('set') end); " ..
-            "pcall(function() ai.setSpeed(" .. tostring(RACE_AI_SPEED) .. ") end); " ..
+            "pcall(function() ai.setSpeed(" .. tostring(speed) .. ") end); " ..
             "pcall(function() ai.setParameters({turnForceCoef = 3.2, awarenessForceCoef = 0.45}) end); " ..
-            "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
             "pcall(function() ai.driveUsingPath(" .. route .. ") end)"
         )
-        return
+        return true
     end
 
-    -- Fallback when no usable road target can be derived.
     veh:queueLuaCommand(
         "pcall(function() ai.setMode('disabled') end); " ..
-        "pcall(function() ai.setMode('chase') end); " ..
-        "pcall(function() ai.setTargetObjectID(" .. tostring(baitId) .. ") end); " ..
+        "pcall(function() ai.setState({mode = 'traffic'}) end); " ..
         "pcall(function() ai.driveInLane('on') end); " ..
         "pcall(function() ai.setAggressionMode('rubberBand') end); " ..
         "pcall(function() ai.setSpeedMode('set') end); " ..
-        "pcall(function() ai.setSpeed(" .. tostring(RACE_AI_SPEED) .. ") end); " ..
+        "pcall(function() ai.setSpeed(" .. tostring(speed) .. ") end); " ..
         "pcall(function() ai.setParameters({turnForceCoef = 3.2, awarenessForceCoef = 0.45}) end)"
     )
+    return false
 end
 
 function spawnRaceVehicle(playerVeh, racerIndex)
@@ -1840,45 +1900,35 @@ function startRace(point, playerPos)
     local waypointCount = point.waypointCount or RACE_CHECKPOINT_COUNT
 
     mission.rallyWaypoints = generateRallyWaypoints(playerPos, waypointCount, RACE_WAYPOINT_SPREAD.min, RACE_WAYPOINT_SPREAD.max)
+    sortWaypointsByStartDistance(playerPos, mission.rallyWaypoints)
     mission.rallyCurrentIdx = 1
     mission.raceRacers = {}
     mission.raceFinishCount = 0
 
     for i = 1, RACE_RACER_COUNT do
         local veh = spawnRaceVehicle(playerVeh, i)
-        local firstWp = mission.rallyWaypoints and mission.rallyWaypoints[1]
-        local bait = spawnRaceBaitVehicle(firstWp, i)
 
-        if veh and bait then
+        if veh then
             local vid = veh:getID()
-            local baitId = bait:getID()
-            if vid and baitId then
+            if vid then
+                local aiConfig = getRaceRacerAiConfig(i)
                 addSpawnedVehicle(vid, "racer")
-                addSpawnedVehicle(baitId, "raceBait")
                 mission.raceRacers[vid] = {
                     idx = 1,
                     finished = false,
-                    baitId = baitId,
+                    aiConfig = aiConfig,
                     aiInitialized = false,
                     racerIndex = i,
                 }
-                moveRaceBaitToWaypoint(baitId, firstWp)
-                queueRaceChaseBaitAI(veh, baitId, firstWp)
-                mission.raceRacers[vid].aiInitialized = true
+                mission.raceRacers[vid].aiInitialized = queueRaceWaypointAI(veh, mission.rallyWaypoints, 1, aiConfig)
             end
-        elseif veh then
-            local vid = veh:getID()
-            if vid then addSpawnedVehicle(vid, "racer") end
-        elseif bait then
-            local baitId = bait:getID()
-            if baitId then addSpawnedVehicle(baitId, "raceBait") end
         end
     end
 
     local racerCount = tableSize(mission.raceRacers or {})
 
     if racerCount == 0 then
-        cleanupMission(false, "No race opponents or race bait targets could spawn.")
+        cleanupMission(false, "No race opponents could spawn.")
         return
     end
 
@@ -2265,7 +2315,8 @@ function drawHUD()
     local width = mission and HUD_WINDOW_WIDTH or HUD_WINDOW_WIDTH
     im.SetNextWindowSize(im.ImVec2(width, 0), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("leftMiddle", width, 520, 24, 24), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.86)
+    im.SetNextWindowBgAlpha(0.84)
+    pushWindowStyle({ 1.0, 0.82, 0.20, 0.80 })
 
     local winFlags = bit.bor(
         im.WindowFlags_NoTitleBar,
@@ -2439,16 +2490,87 @@ function drawHUD()
         end
     end
     im.End()
+    popWindowStyle()
+end
+
+local function drawQuickTravelWindow()
+    if not im or mission or not isMapOrMenuOpen() then return end
+
+    local playerPos = getPlayerPos()
+    if not playerPos then return end
+
+    im.SetNextWindowSize(im.ImVec2(430, 540), im.Cond_Always)
+    im.SetNextWindowPos(anchoredPos("rightMiddle", 430, 540, 24, 24), im.Cond_Always)
+    im.SetNextWindowBgAlpha(0.88)
+    pushWindowStyle({ 0.25, 0.75, 1.0, 0.85 })
+
+    local flags = bit.bor(
+        im.WindowFlags_NoResize,
+        im.WindowFlags_NoMove,
+        im.WindowFlags_NoSavedSettings
+    )
+
+    local drawn = im.Begin("##jonesingQuickTravel", nil, flags)
+    if drawn then
+        if im.SetWindowFontScale then im.SetWindowFontScale(1.0) end
+        im.TextColored(im.ImVec4(0.72, 0.90, 1.0, 1.0), "  QUICK TRAVEL")
+        im.Separator()
+        im.TextColored(im.ImVec4(0.80, 0.80, 0.80, 1.0), "  Click a mission to jump near its marker.")
+
+        for _, mp in ipairs(missionPoints) do
+            local dist = playerPos:distance(mp.pos)
+            local dir = compassDir(mp.pos.x - playerPos.x, mp.pos.y - playerPos.y)
+            local tag, tc = typeStyle(mp.type)
+            local buttonLabel = string.format("  [ TRAVEL ]##travel_%s", tostring(mp.name))
+            if im.Button(buttonLabel) then
+                quickTravelToMissionPoint(mp)
+            end
+            im.TextColored(tc, string.format("  [%s] %s", tag, missionDisplayName(mp)))
+            im.TextColored(im.ImVec4(0.72, 0.72, 0.72, 1.0),
+                string.format("       %s  %s", dir, formatMeters(dist)))
+            local cd = missionCooldowns[mp.name] or 0
+            if cd > 0 then
+                im.TextColored(im.ImVec4(0.55, 0.55, 0.55, 1.0),
+                    string.format("       Cooldown: %ds", math.ceil(cd)))
+            end
+            im.Separator()
+        end
+    end
+    im.End()
+    popWindowStyle()
 end
 
 
 imguiColor = nil
 
+-- Push rounded corners and a coloured border onto the ImGui style stack.
+-- borderColor: { r, g, b, a }  (defaults to soft gold if omitted)
+function pushWindowStyle(borderColor)
+    if im.PushStyleVar then
+        im.PushStyleVar(im.StyleVar_WindowRounding,    12.0)
+        im.PushStyleVar(im.StyleVar_WindowBorderSize,  1.5)
+    end
+    if im.PushStyleColor then
+        local r = borderColor and borderColor[1] or 1.0
+        local g = borderColor and borderColor[2] or 0.82
+        local b = borderColor and borderColor[3] or 0.20
+        local a = borderColor and borderColor[4] or 0.80
+        im.PushStyleColor(im.Col_Border, im.ImVec4(r, g, b, a))
+    end
+end
+
+-- Matching pop for pushWindowStyle (2 style vars + 1 colour).
+function popWindowStyle()
+    if im.PopStyleVar   then im.PopStyleVar(2)   end
+    if im.PopStyleColor then im.PopStyleColor(1) end
+end
+
 function drawLoaderOverlay()
     if not im or not loaderActive then return end
     im.SetNextWindowSize(im.ImVec2(520, 120), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("center", 520, 120, 24, 24), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.92)
+    im.SetNextWindowBgAlpha(0.88)
+    pushWindowStyle({ 1.0, 0.82, 0.10, 0.85 })
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings)
     if im.Begin("##jonesingLoaderOverlay", nil, flags) then
         if im.SetWindowFontScale then im.SetWindowFontScale(1.65) end
@@ -2457,6 +2579,7 @@ function drawLoaderOverlay()
         im.TextColored(im.ImVec4(0.9, 0.9, 0.9, 1.0), "  " .. tostring(loaderLabel or "Please wait..."))
     end
     im.End()
+    popWindowStyle()
 end
 
 function drawBottomBanner(playerPos)
@@ -2468,13 +2591,15 @@ function drawBottomBanner(playerPos)
     if not text or text == "" then return end
     im.SetNextWindowSize(im.ImVec2(900, 100), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("bottomCenter", 900, 100, 24, 42), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.78)
+    im.SetNextWindowBgAlpha(0.80)
+    pushWindowStyle({ 1.0, 0.85, 0.0, 0.80 })
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings)
     if im.Begin("##jonesingBottomBanner", nil, flags) then
         if im.SetWindowFontScale then im.SetWindowFontScale(1.85) end
         im.TextColored(im.ImVec4(1.0, 0.85, 0.0, 1.0), "  " .. text)
     end
     im.End()
+    popWindowStyle()
 end
 
 function imguiColor(r, g, b, a)
@@ -2532,8 +2657,6 @@ function drawRadarPlayerGlyph(cx, cy)
         im.TextColored(im.ImVec4(0.05, 0.05, 0.05, 1.0), "^")
         im.SetCursorScreenPos(im.ImVec2(cx - 9, cy - 12))
         im.TextColored(im.ImVec4(0.20, 1.0, 0.30, 1.0), "^")
-        im.SetCursorScreenPos(im.ImVec2(cx - 11, cy + 10))
-        im.TextColored(im.ImVec4(0.20, 1.0, 0.30, 1.0), "YOU")
     end)
 end
 
@@ -2624,7 +2747,6 @@ function drawPlayerRadarArrow(drawList, cx, cy, radarHeading)
     pcall(function() drawList:AddTriangleFilled(rotPoint(0, -15), rotPoint(-9, 10), rotPoint(9, 10), pcol) end)
     pcall(function() drawList:AddCircleFilled(im.ImVec2(cx, cy), 5.5, imguiColor(0.05, 0.10, 0.05, 0.95), 18) end)
     pcall(function() drawList:AddCircle(im.ImVec2(cx, cy), 14, imguiColor(1,1,1,0.95), 20, 2.0) end)
-    pcall(function() drawList:AddText(im.ImVec2(cx - 24, cy + 18), imguiColor(0.70,1.0,0.70,1.0), 'YOU') end)
 end
 
 function compassFromAngle(angle)
@@ -2636,7 +2758,8 @@ function drawRadar(playerPos)
     local w, h = RADAR_WINDOW_SIZE, RADAR_WINDOW_SIZE
     im.SetNextWindowSize(im.ImVec2(w, h), im.Cond_Always)
     im.SetNextWindowPos(anchoredPos("rightMiddle", w, h, 28, 24), im.Cond_Always)
-    im.SetNextWindowBgAlpha(0.90)
+    im.SetNextWindowBgAlpha(0.86)
+    pushWindowStyle({ 0.55, 0.80, 1.0, 0.80 })
     local flags = bit.bor(im.WindowFlags_NoTitleBar, im.WindowFlags_NoResize, im.WindowFlags_NoMove, im.WindowFlags_NoSavedSettings, im.WindowFlags_NoScrollbar)
     if im.Begin("##jonesingRadar", nil, flags) then
         local drawList = im.GetWindowDrawList and im.GetWindowDrawList()
@@ -2739,6 +2862,7 @@ function drawRadar(playerPos)
         im.TextColored(im.ImVec4(0.78, 0.78, 0.78, 1.0), string.format("Range %dm  Blips:%d", RADAR_RANGE_METERS, #items))
     end
     im.End()
+    popWindowStyle()
 end
 
 function drawTargetArrows(playerPos)
@@ -2780,9 +2904,10 @@ function drawTargetArrows(playerPos)
 end
 
 function drawJonesingUI()
-    -- Hide all custom UI while paused/menu is open. This keeps the pause/menu screen clean.
-    if isGamePaused() then return end
+    if isGamePaused() and not isMapOrMenuOpen() then return end
     local playerPos = getPlayerPos()
+    drawQuickTravelWindow()
+    if isGamePaused() then return end
     drawHUD()
     drawRadar(playerPos)
     drawBottomBanner(playerPos)
@@ -2998,6 +3123,58 @@ function tickTeleportPolice(playerPos, dt)
                         "ai.setMode('chase'); ai.setTargetObjectID(" .. tostring(playerID) .. "); ai.driveInLane('off')"
                     )
                 end
+            end
+        end
+    end
+end
+
+local function recoverRaceRacerInPlace(racerVeh, state, waypoint)
+    if not racerVeh or not state or not waypoint then return end
+
+    local pos = racerVeh:getPosition()
+    pcall(function() racerVeh:setPosition(vec3(pos.x, pos.y, pos.z + 0.35)) end)
+    racerVeh:queueLuaCommand([[
+        local zero = vec3({0,0,0})
+        pcall(function() obj:setVelocity(zero) end)
+        pcall(function() obj:setAngularVelocity(zero) end)
+        pcall(function() obj:resetBrokenFlexMesh() end)
+        pcall(function() obj:resetPhysics() end)
+    ]])
+
+    state.aiInitialized = queueRaceWaypointAI(racerVeh, mission and mission.rallyWaypoints, state.idx or 1, state.aiConfig)
+
+    state.stuckSecs = 0
+    state.recoveryCooldown = RACE_RECOVERY_COOLDOWN
+    state.lastPos = nil
+end
+
+local function tickRaceRacerRecovery(playerPos, dt)
+    if not mission or not playerPos or not mission.raceRacers or not mission.rallyWaypoints then return end
+
+    for vid, state in pairs(mission.raceRacers) do
+        if not state.finished then
+            state.recoveryCooldown = math.max(0, (state.recoveryCooldown or 0) - dt)
+
+            local racerVeh = be:getObjectByID(vid)
+            local wp = mission.rallyWaypoints[state.idx or 1]
+            if racerVeh and wp then
+                local pos = racerVeh:getPosition()
+                local dist = playerPos:distance(pos)
+                local moved = state.lastPos and pos:distance(state.lastPos) or math.huge
+                local actualSpeed = moved ~= math.huge and (moved / math.max(dt, 0.001)) or math.huge
+                state.lastPos = vec3(pos.x, pos.y, pos.z)
+
+                if dist > RACE_RECOVERY_DISTANCE and actualSpeed < RACE_RECOVERY_STOPPED_SPEED then
+                    state.stuckSecs = (state.stuckSecs or 0) + dt
+                    if state.stuckSecs >= RACE_RECOVERY_STOPPED_TIME and (state.recoveryCooldown or 0) <= 0 then
+                        recoverRaceRacerInPlace(racerVeh, state, wp)
+                    end
+                else
+                    state.stuckSecs = 0
+                end
+            else
+                state.stuckSecs = 0
+                state.lastPos = nil
             end
         end
     end
@@ -3322,6 +3499,8 @@ function M._frameOps.updateActiveMission(dt, playerPos)
         end
 
     elseif mtype == RACE then
+        tickRaceRacerRecovery(playerPos, dt)
+
         if mission.raceRacers then
             for vid, state in pairs(mission.raceRacers) do
                 if not state.finished then
@@ -3331,9 +3510,7 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                         local wp = mission.rallyWaypoints and mission.rallyWaypoints[idx]
                         if wp then
                             if not state.aiInitialized then
-                                moveRaceBaitToWaypoint(state.baitId, wp)
-                                queueRaceChaseBaitAI(v, state.baitId, wp)
-                                state.aiInitialized = true
+                                state.aiInitialized = queueRaceWaypointAI(v, mission.rallyWaypoints, idx, state.aiConfig)
                             end
                             local pos = v:getPosition()
                             local dx = pos.x - wp.x
@@ -3347,8 +3524,7 @@ function M._frameOps.updateActiveMission(dt, playerPos)
                                     state.idx = idx + 1
                                     local nextWp = mission.rallyWaypoints[state.idx]
                                     if nextWp then
-                                        moveRaceBaitToWaypoint(state.baitId, nextWp)
-                                        queueRaceChaseBaitAI(v, state.baitId, nextWp)
+                                        state.aiInitialized = queueRaceWaypointAI(v, mission.rallyWaypoints, state.idx, state.aiConfig)
                                     end
                                 end
                             end
