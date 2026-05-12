@@ -314,7 +314,6 @@ local GAME_MODE_MENU = "menu"
 local GAME_MODE_STARTING = "mission_starting"
 local GAME_MODE_ACTIVE = "mission_active"
 local GAME_MODE_IDLE = "idle"
-local MAP_CLOSE_FOCUS_DELAY_SECONDS = 1.0
 
 local function serializeVec3(pos)
     if not pos then return nil end
@@ -858,32 +857,6 @@ local function clearSpawnedMissionVehicles()
         end
     end
     spawnedVehicles = {}
-end
-
-local function closeMapDuringMissionStart()
-    if not mission or not mission.starting then return end
-    if not isMapOrMenuOpen() then return end
-
-    local gm = extensions and extensions.core_gamestate
-    if gm then
-        pcall(function() if gm.requestGameState then gm.requestGameState("play") end end)
-        pcall(function() if gm.setGameState then gm.setGameState("play") end end)
-    end
-
-    local bm = extensions and (extensions.core_bigMap or extensions.core_bigmap)
-    if bm then
-        pcall(function() if bm.close then bm.close() end end)
-        pcall(function() if bm.setVisible then bm.setVisible(false) end end)
-        pcall(function() if bm.setActive then bm.setActive(false) end end)
-    end
-
-    if guihooks then
-        pcall(function() guihooks.trigger("MenuHide", {}) end)
-        pcall(function() guihooks.trigger("ChangeState", { state = "play" }) end)
-    end
-    -- Keep camera/vehicle focus on the player after forcing the UI back to play mode.
-    forcePlayerFocus()
-    armFocusReturn(MAP_CLOSE_FOCUS_DELAY_SECONDS)
 end
 
 -- BeamNG extension callbacks usually provide both real dt and sim dt.
@@ -3618,11 +3591,7 @@ function M.onUpdate(dt, dtSim)
         if bigBannerTimer <= 0 then bigBannerText = "" end
     end
 
-    local mode = gameModeState()
-    if mode == GAME_MODE_MENU then
-        closeMapDuringMissionStart()
-        return
-    end
+    if gameModeState() == GAME_MODE_MENU then return end
 
     if tickPendingMissionStart(dt, playerPos) then
         drawJonesingUI()
