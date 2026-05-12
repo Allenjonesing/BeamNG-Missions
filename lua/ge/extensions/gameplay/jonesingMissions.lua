@@ -299,6 +299,7 @@ initTimer = 0     -- seconds spent waiting for map data
 loaderHideTimer = 0     -- keeps loader visible briefly after heavy spawn work
 hudMsgTimer = 0     -- throttles built-in guihooks HUD fallback
 focusReturnTimer = 0     -- repeatedly returns focus to player after AI spawns
+focusReturnPulseTimer = 0 -- throttles repeated focus steals while timer is active
 loaderActive = false -- custom ImGui loader overlay; survives when built-in loader fails
 loaderLabel = "Loading..."
 bigBannerText = ""
@@ -314,6 +315,7 @@ local GAME_MODE_MENU = "menu"
 local GAME_MODE_STARTING = "mission_starting"
 local GAME_MODE_ACTIVE = "mission_active"
 local GAME_MODE_IDLE = "idle"
+local FOCUS_RETURN_PULSE_INTERVAL = 0.20
 
 local function serializeVec3(pos)
     if not pos then return nil end
@@ -864,6 +866,19 @@ local function isMapOrMenuOpen()
         end
     end
 
+    local bigMapProbes = {
+        function() return extensions and extensions.core_bigMap and extensions.core_bigMap.isBigMapOpen and extensions.core_bigMap.isBigMapOpen() end,
+        function() return extensions and extensions.core_bigMap and extensions.core_bigMap.isOpen and extensions.core_bigMap.isOpen() end,
+        function() return extensions and extensions.core_bigMap and extensions.core_bigMap.isActive and extensions.core_bigMap.isActive() end,
+        function() return extensions and extensions.core_bigmap and extensions.core_bigmap.isBigMapOpen and extensions.core_bigmap.isBigMapOpen() end,
+        function() return extensions and extensions.core_bigmap and extensions.core_bigmap.isOpen and extensions.core_bigmap.isOpen() end,
+        function() return extensions and extensions.core_bigmap and extensions.core_bigmap.isActive and extensions.core_bigmap.isActive() end,
+    }
+    for _, fn in ipairs(bigMapProbes) do
+        local ok, open = pcall(fn)
+        if ok and open == true then return true end
+    end
+
     return false
 end
 
@@ -1132,13 +1147,18 @@ function forcePlayerFocus()
     local pv = getPlayerVehicle()
     if not pv then return end
 
-    -- Spawning vehicles can steal focus in BeamNG. Re-enter the original player
-    -- vehicle, but never force a specific camera mode.
-    pcall(function() be:enterVehicle(0, pv) end)
+    local activePlayerVehicleId = nil
+    local pvId = pv.getID and pv:getID() or nil
+    pcall(function() if be and be.getPlayerVehicleID then activePlayerVehicleId = be:getPlayerVehicleID(0) end end)
+    -- If BeamNG already reports this as the active player vehicle, skip re-entering it.
+    if pvId and activePlayerVehicleId and pvId == activePlayerVehicleId then return end
+
+    pcall(function() if be and be.enterVehicle then be:enterVehicle(0, pv) end end)
 end
 
 function armFocusReturn(seconds)
     focusReturnTimer = math.max(focusReturnTimer or 0, seconds or 1.0)
+    focusReturnPulseTimer = 0
 end
 
 function showLoader(label)
@@ -2012,6 +2032,7 @@ end
 
 function tickPendingMissionStart(dt, playerPos)
     if not mission or not mission.starting then return false end
+    if isMissionUpdateBlocked() then return true end
 
     if spawnedVehicles and #spawnedVehicles > 0 then
         mission.starting = false
@@ -3604,8 +3625,14 @@ function M.onUpdate(dt, dtSim)
     if focusReturnTimer and focusReturnTimer > 0 then
         focusReturnTimer = math.max(0, focusReturnTimer - rawDt)
         if not missionBlocked then
-            forcePlayerFocus()
+            focusReturnPulseTimer = (focusReturnPulseTimer or 0) - rawDt
+            if focusReturnPulseTimer <= 0 then
+                forcePlayerFocus()
+                focusReturnPulseTimer = FOCUS_RETURN_PULSE_INTERVAL
+            end
         end
+    else
+        focusReturnPulseTimer = 0
     end
 
     if loaderHideTimer and loaderHideTimer > 0 then
@@ -3620,12 +3647,12 @@ function M.onUpdate(dt, dtSim)
         if bigBannerTimer <= 0 then bigBannerText = "" end
     end
 
-    if missionBlocked then return end
-
     if tickPendingMissionStart(dt, playerPos) then
         drawJonesingUI()
         return
     end
+
+    if missionBlocked then return end
 
     M._frameOps.tickMissionCooldowns(dt)
     M._frameOps.drawMissionMarkers(playerPos)
