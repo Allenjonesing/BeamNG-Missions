@@ -1149,7 +1149,9 @@ function forcePlayerFocus()
 
     local activePlayerVehicleId = nil
     local pvId = pv.getID and pv:getID() or nil
-    pcall(function() if be and be.getPlayerVehicleID then activePlayerVehicleId = be:getPlayerVehicleID(0) end end)
+    if be and be.getPlayerVehicleID then
+        pcall(function() activePlayerVehicleId = be:getPlayerVehicleID(0) end)
+    end
     -- If BeamNG already reports this as the active player vehicle, skip re-entering it.
     if pvId and activePlayerVehicleId and pvId == activePlayerVehicleId then return end
 
