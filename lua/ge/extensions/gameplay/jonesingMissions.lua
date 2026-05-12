@@ -836,6 +836,7 @@ local function isMapOrMenuOpen()
     local modeKeys = {
         "state", "currentState", "mode", "uiState", "gameState"
     }
+    local stateNeedles = { "menu", "bigmap", "big_map", "pause", "mapopen", "map_open", "mapview", "map_view" }
     local stateSources = {
         extensions and extensions.core_gamestate and extensions.core_gamestate.state,
         extensions and extensions.core_gamestate and extensions.core_gamestate.gameState,
@@ -853,8 +854,7 @@ local function isMapOrMenuOpen()
                 local rawState = tostring(state[key] or "")
                 if rawState ~= "" then
                     local s = string.lower(rawState)
-                    local needles = { "menu", "bigmap", "big_map", "pause", "mapopen", "map_open", "mapview", "map_view" }
-                    for _, needle in ipairs(needles) do
+                    for _, needle in ipairs(stateNeedles) do
                         if string.find(s, needle, 1, true) then
                             return true
                         end
